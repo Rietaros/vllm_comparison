@@ -11,7 +11,10 @@ ACTIVATION_PRECISIONS = ("FP8", "FP8_A8")
 ACTIVATION_POLICY = "mxfp8-linear-input-qdq-v1"
 MEMORY_POLICY = "engine-per-request-mlx-peak-rss-v1"
 MEMORY_METRICS = ("mlx_active_bytes_before", "mlx_active_bytes_after", "mlx_peak_bytes",
-                  "mlx_peak_extra_bytes", "mlx_cache_bytes_after", "engine_rss_bytes_after")
+                  "mlx_peak_extra_bytes", "mlx_cache_bytes_after", "engine_rss_bytes_after",
+                  "cuda_allocated_bytes_before", "cuda_allocated_bytes_after", "cuda_reserved_bytes_after",
+                  "cuda_peak_allocated_bytes", "cuda_peak_extra_bytes", "cuda_peak_reserved_bytes",
+                  "cuda_device_used_bytes_after")
 CONTRACT_FIELDS = ("checkpoint", "source_revision", "dtype", "kv_cache_dtype", "kv_cache_bytes",
                    "cache_block_size", "num_gpu_blocks", "max_model_len", "max_new_tokens",
                    "memory_fraction", "memory_policy", "timing_policy", "seed", "temperature")
@@ -106,9 +109,13 @@ def begin_request_memory(model):
     return engine_memory(model, reset_peak=True)
 
 
-def sample_memory(llm, audit, before=False):
+def sample_memory(llm, audit, before=False, backend="metal"):
     try:
-        snapshots = llm.apply_model(begin_request_memory if before else engine_memory)
+        if backend == "cuda":
+            from cuda_backend import begin_request_memory as begin, engine_memory as end
+        else:
+            begin, end = begin_request_memory, engine_memory
+        snapshots = llm.apply_model(begin if before else end)
         if len(snapshots) != 1 or snapshots[0].get("pid") != audit.get("engine_pid"):
             raise ValueError("Memory snapshot must come from the audited engine process")
         return snapshots[0]
@@ -118,17 +125,25 @@ def sample_memory(llm, audit, before=False):
 
 def memory_fields(before, after):
     valid_peak = "mlx_peak_bytes" in after and "mlx_active_bytes" in before
+    valid_cuda_peak = "cuda_peak_allocated_bytes" in after and "cuda_allocated_bytes" in before
     return {"memory_before": before, "memory_after": after,
             "mlx_active_bytes_before": before.get("mlx_active_bytes"),
             "mlx_active_bytes_after": after.get("mlx_active_bytes"),
             "mlx_peak_bytes": after["mlx_peak_bytes"] if valid_peak else None,
             "mlx_peak_extra_bytes": max(0, after["mlx_peak_bytes"] - before["mlx_active_bytes"]) if valid_peak else None,
             "mlx_cache_bytes_after": after.get("mlx_cache_bytes"),
+            "cuda_allocated_bytes_before": before.get("cuda_allocated_bytes"),
+            "cuda_allocated_bytes_after": after.get("cuda_allocated_bytes"),
+            "cuda_reserved_bytes_after": after.get("cuda_reserved_bytes"),
+            "cuda_peak_allocated_bytes": after["cuda_peak_allocated_bytes"] if valid_cuda_peak else None,
+            "cuda_peak_extra_bytes": max(0, after["cuda_peak_allocated_bytes"] - before["cuda_allocated_bytes"]) if valid_cuda_peak else None,
+            "cuda_peak_reserved_bytes": after.get("cuda_peak_reserved_bytes") if valid_cuda_peak else None,
+            "cuda_device_used_bytes_after": after.get("cuda_device_used_bytes"),
             "engine_rss_bytes_after": after.get("rss_bytes"),
             "engine_rss_high_water_bytes": after.get("rss_high_water_bytes")}
 
 
-def comparison_rows(summaries, trials):
+def comparison_rows(summaries, trials, backend="metal"):
     """Keep each model/context separate and validate actual paired attempts."""
     groups = {}
     for item in summaries:
@@ -148,7 +163,10 @@ def comparison_rows(summaries, trials):
         for trial_id in matched["FP8"].keys() & matched["FP8_A8"].keys():
             a, b = matched["FP8"][trial_id], matched["FP8_A8"][trial_id]
             contract = a.get("experiment_contract")
-            if not isinstance(contract, dict) or set(contract) != set(CONTRACT_FIELDS):
+            required = set(CONTRACT_FIELDS)
+            if a.get("backend") == "cuda":
+                required |= {"backend", "weight_policy", "weight_sha256"}
+            if not isinstance(contract, dict) or set(contract) != required:
                 raise ValueError("Activation comparison requires a complete checkpoint/cache/settings contract")
             for field in ("experiment_contract", "prompt_sha256", "input_tokens", "expected"):
                 if a.get(field) is None or a.get(field) != b.get(field):
@@ -158,6 +176,11 @@ def comparison_rows(summaries, trials):
                 "bf16_completed": baseline["trials_successful"] if baseline else 0,
                 "fp8_rounded_completed": rounded["trials_successful"],
                 "trials_requested_per_case": rounded["trials_requested"]}
+        backends = {row.get("backend", "metal") for row in trials if row["precision"] in ACTIVATION_PRECISIONS
+                    and row["context"] == context and row.get("tier") == tier and row.get("model") == model}
+        if len(backends) > 1:
+            raise ValueError("Activation cases must use the same backend")
+        item["backend"] = next(iter(backends), backend)
         successful_ids = {p: {i for i, row in matched[p].items() if row["status"] == "ok"}
                           for p in ACTIVATION_PRECISIONS}
         item["successful_trial_pairs"] = len(successful_ids["FP8"] & successful_ids["FP8_A8"])
@@ -165,7 +188,10 @@ def comparison_rows(summaries, trials):
             for metric in ("generation_s_mean", "generation_s_stddev", "ttft_s_mean", "ttft_s_stddev",
                            "ttft_measured_trials", "field_accuracy_mean", "reasoning_accuracy_mean", "answer_pass_rate",
                            "mlx_peak_bytes_mean", "mlx_peak_bytes_maximum", "mlx_peak_extra_bytes_mean",
-                           "engine_rss_bytes_after_mean", "mlx_peak_bytes_measured_trials", "engine_rss_bytes_after_measured_trials"):
+                           "engine_rss_bytes_after_mean", "mlx_peak_bytes_measured_trials", "engine_rss_bytes_after_measured_trials",
+                           "cuda_peak_allocated_bytes_mean", "cuda_peak_allocated_bytes_maximum", "cuda_peak_extra_bytes_mean",
+                           "cuda_peak_allocated_bytes_measured_trials", "cuda_peak_reserved_bytes_mean",
+                           "cuda_reserved_bytes_after_mean", "cuda_device_used_bytes_after_mean"):
                 item[prefix + "_" + metric] = cell.get(metric) if cell else None
         a, b = item["bf16_generation_s_mean"], item["fp8_rounded_generation_s_mean"]
         # Do not compare independently populated aggregates without a verified pair.
@@ -175,13 +201,22 @@ def comparison_rows(summaries, trials):
     return comparisons
 
 
-def write_comparison(output_dir, summaries, trials):
+def write_comparison(output_dir, summaries, trials, backend="metal"):
     """Write a dedicated comparison with honest coverage and memory scope."""
-    comparisons = comparison_rows(summaries, trials)
+    comparisons = comparison_rows(summaries, trials, backend)
     if not comparisons:
         return []
-    (output_dir / "activation_comparison.json").write_text(json.dumps({"activation_policy": ACTIVATION_POLICY,
-        "memory_policy": MEMORY_POLICY, "comparison": comparisons}, indent=2, allow_nan=False) + "\n")
+    if backend == "cuda":
+        from cuda_backend import ACTIVATION_POLICY as policy, MEMORY_POLICY as memory_policy
+        peak, allocator = "cuda_peak_allocated_bytes", "CUDA allocated"
+        rounding = "FP8_A8 rounds quantized projection inputs per token to FP8 E4M3, then returns BF16 buffers. The unquantized output head retains BF16 inputs."
+    else:
+        policy, memory_policy, peak, allocator = ACTIVATION_POLICY, MEMORY_POLICY, "mlx_peak_bytes", "MLX"
+        rounding = "FP8_A8 rounds quantized projection inputs to MXFP8 with mx.qqmm, then computes with BF16 buffers. A quantized tied output head also receives rounding."
+    if any(item["backend"] != backend for item in comparisons):
+        raise ValueError("Activation report backend does not match its trials")
+    (output_dir / "activation_comparison.json").write_text(json.dumps({"backend": backend, "activation_policy": policy,
+        "memory_policy": memory_policy, "comparison": comparisons}, indent=2, allow_nan=False) + "\n")
     with (output_dir / "activation_comparison.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(comparisons[0]))
         writer.writeheader()
@@ -191,13 +226,13 @@ def write_comparison(output_dir, summaries, trials):
     def percent(value):
         return number(value, .01) + "%" if value is not None else "—"
     lines = ["## Fixed FP8 weights: activation comparison", "",
-        "FP8 uses BF16 activations. FP8_A8 rounds projection inputs to MXFP8 with mx.qqmm, then computes with BF16 buffers. "
+        "FP8 uses BF16 activations. " + rounding + " "
         "This is a quantize/dequantize experiment, not native FP8 arithmetic or persistent FP8 activation storage. "
-        "Embedding lookups, attention and the KV cache remain unchanged. Linear projections, including a tied output head, receive rounding.", "",
+        "Embedding lookups, attention and the KV cache retain BF16 behavior.", "",
         "Both cases reuse one FP8 checkpoint, the same prompt token IDs, BF16 KV dtype, cache block size/count, generation settings and rotating trial schedule. "
         "Verified pairs check checkpoint/cache/settings identity, prompt hashes, token counts and reference answers. "
         "Sequential engine runs can still differ due to system load and compilation; means include first-request work.", "",
-        "| Model/tier | Context | Case | Completed | Verified pairs | Mean latency s | Mean TTFT ms | TTFT coverage | Mean field accuracy | Answer pass | Mean MLX peak MiB | MLX peak coverage | Mean engine RSS after MiB | RSS coverage |",
+        f"| Model/tier | Context | Case | Completed | Verified pairs | Mean latency s | Mean TTFT ms | TTFT coverage | Mean field accuracy | Answer pass | Mean {allocator} peak MiB | Peak coverage | Mean engine RSS after MiB | RSS coverage |",
         "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for item in comparisons:
         for prefix, label in (("bf16", "FP8 / BF16 activations"), ("fp8_rounded", "FP8_A8 / FP8-rounded activations")):
@@ -208,12 +243,17 @@ def write_comparison(output_dir, summaries, trials):
                 f"{completed}/{item['trials_requested_per_case']} | {item['verified_trial_pairs']} | "
                 f"{number(item[prefix + '_generation_s_mean'])} | {number(item[prefix + '_ttft_s_mean'], .001)} | "
                 f"{item[prefix + '_ttft_measured_trials'] or 0}/{completed} | "
-                f"{percent(field)} | {percent(passed)} | {number(item[prefix + '_mlx_peak_bytes_mean'], 1024**2)} | "
-                f"{item[prefix + '_mlx_peak_bytes_measured_trials'] or 0}/{completed} | "
+                f"{percent(field)} | {percent(passed)} | {number(item[prefix + '_' + peak + '_mean'], 1024**2)} | "
+                f"{item[prefix + '_' + peak + '_measured_trials'] or 0}/{completed} | "
                 f"{number(item[prefix + '_engine_rss_bytes_after_mean'], 1024**2)} | "
                 f"{item[prefix + '_engine_rss_bytes_after_measured_trials'] or 0}/{completed} |")
-    lines += ["", "MLX peak is the engine's tracked active allocation peak, reset before each request; it includes weights and KV allocations, "
+    memory_scope = ("CUDA peak is the engine's Torch allocator peak, reset before each request; weights and KV allocations are included. "
+        "Reserved peak/after and device-wide used memory after the request are saved separately. Torch counters exclude allocations outside its allocator; "
+        "device-wide usage includes other processes. Extra peak subtracts the pre-request allocated bytes. Loaded parameter SHA-256 must match across paired trials. "
+        if backend == "cuda" else "MLX peak is the engine's tracked active allocation peak, reset before each request; it includes weights and KV allocations, "
         "and excludes allocator cache and allocations outside MLX. Extra peak above the pre-request active allocation is also saved. "
+        )
+    lines += ["", memory_scope +
         "Engine RSS is a post-request resident-memory snapshot, not a sampled request peak. Its saved high-water mark is cumulative. "
         "These scopes overlap and must not be added. Memory RPCs and counter reset are outside TTFT and latency timing; "
         "missing measurements stay unavailable with explicit coverage. No activation-memory saving is assumed.", "",

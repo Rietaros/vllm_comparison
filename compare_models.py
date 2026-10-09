@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare three model sizes, four weight formats and three contexts on Metal."""
+"""Compare model tiers, weight formats and contexts on Metal or NVIDIA CUDA."""
 from __future__ import annotations
 
 import argparse
@@ -73,19 +73,18 @@ def suite_report(output_dir, hardware, settings):
     errors = sum(row["status"] == "error" for row in trials)
     requested = 3 * len(settings["precisions"]) * 3 * settings["repeats"]
     lines = ["# Model size and precision comparison", "",
-             f"Hardware: **{hardware.get('chip', hardware['architecture'])}, {hardware.get('memory_bytes', 0) / 1024**3:.0f} GiB unified RAM**, "
-             f"{hardware['cpu_cores']} CPU cores, {hardware.get('gpu_cores', 'unrecorded')} GPU cores, macOS {hardware['os_version']}. Backend: vLLM-Metal.", "",
+             "Hardware: " + bench.hardware_description(hardware) + ".", "",
              f"Requested {requested} generations; attempted {attempted}; completed {successful}; hardware-skipped {skipped}; error rows {errors}. "
              f"Each measured model/precision/context cell has {settings['repeats']} requested repetitions.", "",
-             "The tiers describe relative parameter counts within this laptop experiment. A 4B model is the largest tier here, not a frontier model.", "",
+             "The tiers describe relative parameter counts within this experiment. A 4B model is the largest default tier.", "",
              "## Models and hardware fit", "",
              "| Tier | Model | Model parameters | Precision | Estimated runtime GiB | Budget GiB | Hardware plan |",
              "|---|---|---:|---|---:|---:|---|"]
-    if "memory_bytes" in hardware:
-        budget = bench.laptop_memory_budget(hardware, settings.get("memory_fraction"), settings.get("memory_budget_gib"))
-        lines[4:4] = [f"Requested laptop budget: {budget['requested_bytes'] / 1024**3:.2f} GiB; "
+    if ("gpu_memory_bytes" if hardware.get("backend") == "cuda" else "memory_bytes") in hardware:
+        budget = bench.device_memory_budget(hardware, settings.get("memory_fraction"), settings.get("memory_budget_gib"))
+        lines[4:4] = [f"Requested memory budget: {budget['requested_bytes'] / 1024**3:.2f} GiB; "
                       f"effective device budget: {budget['effective_bytes'] / 1024**3:.2f} GiB. "
-                      f"Metal receives {budget['backend_memory_fraction']:.4f} of its recommended working set. "
+                      f"Backend memory fraction: {budget['backend_memory_fraction']:.4f}. "
                       "This is a planning budget rather than a measured or hard process-memory cap.", ""]
     for item in models:
         count = item.get("model_parameter_count")
@@ -95,7 +94,7 @@ def suite_report(output_dir, hardware, settings):
                          f"{'Fits configured budget' if plan['fits'] else 'Skipped'} |")
     lines += ["", "Runtime estimates include weights, group-scale allowance, a context-sized KV cache and 1 GiB workspace/engine reserve. "
               "The requested budget is capped to physical RAM and Apple's recommended GPU working set. Estimates are not measured peak usage. "
-              "Each model result records a live memory/swap snapshot; other applications and swap can affect timing.", "",
+              "Each model result records its hardware and backend. Concurrent system load can affect timing.", "",
               "## Tasks", "",
               "Short tests stock availability; Medium filters and ranks supplier quotes; Long reconciles a shipment dossier with correction notices and a superseding memo. "
               "Rows contain unique receipts, offers and movements instead of repeated filler. Each reference answer is computed from the same task data supplied to the model.", "",
@@ -139,13 +138,16 @@ def suite_report(output_dir, hardware, settings):
               "Invalid JSON prevents field scoring. Per-field rates use successful requests; full-answer/JSON rates count all generation attempts. "
               "Ten greedy repetitions measure timing variability, not ten independent examples or cross-validation. "
               "These tasks cannot establish general model quality or a monotonic relationship between model size and correctness.", "",
-              "FP8 is MXFP8 weight storage with BF16 activations; INT4 uses affine weights with BF16 activations. "
+              ("CUDA FP8 uses per-channel E4M3 weights and INT4 uses symmetric groups of 128; both use weight-only Marlin with BF16 inputs. "
+               "Dense weight payloads describe the original source file; loaded parameter bytes are in each runtime audit. "
+               if settings.get("backend") == "cuda" else
+               "Metal FP8 is MXFP8 weight storage with BF16 inputs; INT4 uses affine weights with BF16 inputs. ") +
               "FP32 is cast from the same BF16 source checkpoint; it cannot recover training precision. "
               "Unsupported or oversized cases have no fabricated timing or accuracy.", "",
               "## Outputs and evidence", ""]
     if "FP8_A8" in settings["precisions"]:
         index = lines.index("## Outputs and evidence")
-        lines[index:index] = bench.write_comparison(output_dir, summaries, trials)
+        lines[index:index] = bench.write_comparison(output_dir, summaries, trials, settings.get("backend", "metal"))
     for item in models:
         prompt_link = (f"[complete prompts]({item['tier'].lower()}/prompts.md), "
                        if any(p.get("input_tokens") for p in item.get("prompts", [])) else "")
@@ -164,6 +166,7 @@ def suite_report(output_dir, hardware, settings):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    bench.add_backend_arguments(parser)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Model configuration JSON (default: config.json beside this script)")
     parser.add_argument("--models", nargs=3, metavar=("LIGHT", "MEDIUM", "COMPLEX"),
                         help="Override the lightweight, medium and complex models from config")
@@ -204,17 +207,21 @@ def parse_args(argv=None):
 def main():
     args = parse_args()
     bench.local_environment()
-    hardware = bench.hardware_info()
+    hardware = bench.hardware_info(args.backend)
     output_dir = (args.output_dir or bench.ROOT / "results" / ("models_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))).resolve()
     settings = {key: getattr(args, key) for key in ("models", "model_order", "precisions", "context_tokens", "repeats", "max_new_tokens", "memory_fraction", "memory_budget_gib", "thinking", "dry_run")}
-    settings["cache_policy"] = "physical-budget-to-metal-with-block-override-v1"
+    settings["backend"] = hardware["backend"]
+    settings["cuda_visible_devices"] = hardware.get("cuda_visible_devices")
+    settings["gpu_uuid"] = hardware.get("gpu_uuid")
+    settings["cache_policy"] = bench.CACHE_POLICIES[settings["backend"]]
     settings["prompt_suite"] = bench.PROMPT_SUITE
     settings["timing_policy"] = bench.TIMING_POLICY
-    settings.update(bench.activation_settings(args.precisions))
+    settings.update(bench.activation_settings(args.precisions, settings["backend"]))
     manifest = output_dir / "suite_manifest.json"
     if args.resume:
         previous = json.loads(manifest.read_text())
-        if previous["settings"] != settings or previous["hardware"]["packages"] != hardware["packages"]:
+        saved_settings = {"backend": "metal", "cuda_visible_devices": None, "gpu_uuid": None, **previous["settings"]}
+        if saved_settings != settings or previous["hardware"]["packages"] != hardware["packages"]:
             raise ValueError("Resume requires identical suite settings and package versions")
     elif manifest.exists():
         raise ValueError("Suite exists; use a new output directory or --resume")
@@ -226,6 +233,7 @@ def main():
         folder = output_dir / tier.lower()
         folder.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, str(bench.ROOT / "compare_vllm.py"), "--model", model,
+                   "--backend", settings["backend"],
                    "--output-dir", str(folder), "--repeats", str(args.repeats),
                    "--max-new-tokens", str(args.max_new_tokens),
                    *(["--memory-budget-gib", str(args.memory_budget_gib)] if args.memory_budget_gib is not None

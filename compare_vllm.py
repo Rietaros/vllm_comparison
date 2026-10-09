@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repeated precision/context benchmarks with averages on real vLLM-Metal."""
+"""Repeated precision/context benchmarks on Apple Metal or NVIDIA CUDA."""
 from __future__ import annotations
 
 import argparse
@@ -25,6 +25,8 @@ from pathlib import Path
 
 from prompt_tasks import PROMPT_SUITE, SYSTEM, TASK_BUILDERS
 from benchmark_config import DEFAULT_CONFIG, MODEL_TIERS, load_models
+from benchmark_backend import (resolve_backend, add_backend_arguments, device_memory_budget,
+                               hardware_description, CACHE_POLICIES)
 from activation_experiment import (ACTIVATION_PRECISIONS, ACTIVATION_POLICY, MEMORY_POLICY, MEMORY_METRICS,
     round_fp8_activations, sample_memory, memory_fields, write_comparison)
 
@@ -68,10 +70,13 @@ def local_environment():
         os.environ.setdefault(key, value)
 
 
-def hardware_info():
+def hardware_info(backend="auto"):
+    backend = resolve_backend(backend)
     info = {"os": platform.system(), "os_version": platform.mac_ver()[0] or platform.release(),
             "architecture": platform.machine(), "python": platform.python_version(),
-            "cpu_cores": os.cpu_count(), "backend": "vllm-metal"}
+            "cpu_cores": os.cpu_count(), "backend": backend}
+    if platform.system() == "Linux":
+        info["memory_bytes"] = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     if platform.system() == "Darwin":
         for key, command in (("chip", ["sysctl", "-n", "machdep.cpu.brand_string"]),
                              ("memory_bytes", ["sysctl", "-n", "hw.memsize"])):
@@ -87,12 +92,21 @@ def hardware_info():
                 if re.fullmatch(r"\d+ GB", memory):
                     info["memory_bytes"] = int(memory.split()[0]) * 1024 ** 3
     packages = {}
-    for package in ("vllm", "vllm-metal", "mlx", "mlx-lm", "torch", "transformers"):
+    if backend == "cuda":
+        from cuda_backend import REQUIRED_PACKAGES
+        names = REQUIRED_PACKAGES
+    else:
+        names = ("vllm", "vllm-metal", "mlx", "mlx-lm", "torch", "transformers")
+    for package in names:
         try:
             packages[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
             packages[package] = None
     info["packages"] = packages
+    if backend == "cuda":
+        import cuda_backend
+        info.update(cuda_backend.hardware_info())
+        return info
     info["compatible_os"] = (info["os"] == "Darwin" and info["architecture"] == "arm64"
                              and int((info["os_version"] or "0").split(".")[0]) >= 15)
     if info["compatible_os"] and packages.get("mlx"):
@@ -112,22 +126,15 @@ def hardware_info():
 
 
 def laptop_memory_budget(hardware, fraction=None, budget_gib=None):
-    """Express the requested laptop budget in bytes, then cap it to device limits."""
-    if budget_gib is None and fraction is None:
-        budget_gib = 10.0
-    requested = int(budget_gib * 1024**3) if budget_gib is not None else int(hardware["memory_bytes"] * fraction)
-    metal_limit = hardware.get("metal_device", {}).get("max_recommended_working_set_size", hardware["memory_bytes"])
-    effective = min(requested, hardware["memory_bytes"], metal_limit)
-    return {"requested_bytes": requested, "effective_bytes": effective,
-            "metal_limit_bytes": metal_limit, "backend_memory_fraction": effective / metal_limit,
-            "source": "GiB" if budget_gib is not None else "RAM fraction"}
+    """Compatibility alias for the shared Metal/CUDA budget planner."""
+    return device_memory_budget(hardware, fraction, budget_gib)
 
 
 def add_memory_arguments(parser):
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--memory-budget-gib", type=float,
                        help="Weight + KV + runtime planning budget in GiB (default: 10), capped to device limits")
-    group.add_argument("--memory-fraction", type=float, help="Use this fraction of physical RAM instead of an absolute GiB budget")
+    group.add_argument("--memory-fraction", type=float, help="Fraction of unified RAM (Metal) or selected GPU VRAM (CUDA)")
 
 
 def validate_memory_arguments(args, parser):
@@ -135,8 +142,10 @@ def validate_memory_arguments(args, parser):
         args.memory_budget_gib = 10.0
     if args.memory_budget_gib is not None and (not math.isfinite(args.memory_budget_gib) or args.memory_budget_gib <= 0):
         parser.error("--memory-budget-gib must be finite and positive")
-    if args.memory_fraction is not None and not 0 < args.memory_fraction <= .7:
-        parser.error("--memory-fraction must be > 0 and <= 0.7")
+    backend = resolve_backend(getattr(args, "backend", "metal"))
+    maximum = .95 if backend == "cuda" else .7
+    if args.memory_fraction is not None and not 0 < args.memory_fraction <= maximum:
+        parser.error(f"--memory-fraction must be > 0 and <= {maximum} for {backend}")
 
 
 def add_precision_arguments(parser):
@@ -146,9 +155,21 @@ def add_precision_arguments(parser):
                        help="Compare fixed FP8 weights with BF16 vs FP8-rounded activations and engine memory")
 
 
-def activation_settings(precisions):
-    return ({"activation_policy": ACTIVATION_POLICY, "memory_policy": MEMORY_POLICY,
+def activation_settings(precisions, backend="metal"):
+    if backend == "cuda":
+        import cuda_backend
+        activation_policy, memory_policy = cuda_backend.ACTIVATION_POLICY, cuda_backend.MEMORY_POLICY
+    else:
+        activation_policy, memory_policy = ACTIVATION_POLICY, MEMORY_POLICY
+    return ({"activation_policy": activation_policy, "memory_policy": memory_policy,
              "activation_baseline": "FP8", "kv_cache_dtype": "bfloat16"} if "FP8_A8" in precisions else {})
+
+
+def precision_description(precision, backend="metal"):
+    if backend == "cuda":
+        from cuda_backend import DESCRIPTIONS
+        return DESCRIPTIONS.get(precision, SPECS[precision]["description"])
+    return SPECS[precision]["description"]
 
 
 def memory_plan(config, parameter_count, precision, max_model_len, hardware, fraction=None, budget_gib=None):
@@ -158,12 +179,19 @@ def memory_plan(config, parameter_count, precision, max_model_len, hardware, fra
     if spec["mode"]:
         # Block scales, affine biases and remaining dense tensors need space too.
         weight_bytes = math.ceil(weight_bytes * 1.10)
+        if hardware.get("backend") == "cuda":
+            # CUDA keeps token embeddings and the output head in BF16. Their
+            # large vocabulary matrices must not be budgeted as FP8/INT4.
+            dense = config.get("vocab_size", 0) * config["hidden_size"] * (1 if config.get("tie_word_embeddings") else 2)
+            weight_bytes += min(dense, parameter_count) * (2 - spec["bits"] / 8)
+            weight_bytes = math.ceil(weight_bytes)
     head_dim = config.get("head_dim", config["hidden_size"] // config["num_attention_heads"])
-    cache_per_token = (2 * config["num_hidden_layers"] * config["num_key_value_heads"]
+    cache_per_token = (2 * config["num_hidden_layers"] * config.get("num_key_value_heads", config["num_attention_heads"])
                        * head_dim * (4 if precision == "FP32" else 2))
     cache_bytes = max(256 * MIB, math.ceil(cache_per_token * (max_model_len + 128) / (64 * MIB)) * 64 * MIB)
-    overhead = 1024 * MIB  # Workspace, activations and engine reserve.
-    limits = laptop_memory_budget(hardware, fraction, budget_gib)
+    cuda = hardware.get("backend") == "cuda"
+    overhead = (2 if cuda else 1) * 1024 * MIB  # Workspace, activations and engine reserve.
+    limits = device_memory_budget(hardware, fraction, budget_gib)
     budget = limits["effective_bytes"]
     block_size = 16
     # Metal 0.30 budgets against its recommended working set, and its paged
@@ -178,7 +206,7 @@ def memory_plan(config, parameter_count, precision, max_model_len, hardware, fra
             "runtime_reserve_bytes": overhead, "estimated_runtime_bytes": required,
             "runtime_budget_bytes": budget, "fits": required <= budget,
             "reason": f"Estimated weights + KV + runtime reserve = {required / 1024**3:.2f} GiB; "
-                      f"configured laptop budget = {budget / 1024**3:.2f} GiB"}
+                      f"configured {'GPU VRAM' if cuda else 'unified RAM'} budget = {budget / 1024**3:.2f} GiB"}
 
 
 def stream_qwen3_checkpoint(source, destination, precision):
@@ -421,11 +449,11 @@ def task_metadata(prompt):
     return {key: prompt[key] for key in ("prompt_suite", "task_id", "expected", "reasoning_fields") if key in prompt}
 
 
-def blank_rows(precision, prompts, status, error):
-    return [{"precision": precision, "context": p["context"], "status": status, "error": error,
+def blank_rows(precision, prompts, status, error, backend="metal"):
+    return [{"precision": precision, "backend": backend, "context": p["context"], "status": status, "error": error,
              **task_metadata(p),
              "trial_id": p.get("trial_id", 1),
-             "description": SPECS[precision]["description"], "input_tokens": p["input_tokens"],
+             "description": precision_description(precision, backend), "input_tokens": p["input_tokens"],
              "prompt_sha256": p["prompt_sha256"], "generation_calls": 0,
              "generation_s": None, "ttft_s": None, "ttft_source": None,
              "ttft_unavailable_reason": "No completed generation", "output": None} for p in prompts]
@@ -510,13 +538,25 @@ def audit_loaded_model(model):
 def run_worker(job):
     """Each precision runs in its own process to release all device/engine memory."""
     local_environment()
-    import mlx.core as mx
+    backend = job.get("backend", "metal")
+    if backend == "cuda":
+        import torch
+        import cuda_backend as runtime
+        # generate returns CPU token IDs after engine execution. Device counters
+        # synchronize inside the engine RPC, where the model actually resides.
+        synchronize = lambda: None
+    else:
+        import mlx.core as mx
+        runtime = sys.modules[__name__]
+        synchronize = mx.synchronize
     from vllm import LLM, SamplingParams
     from vllm.platforms import current_platform
-    if current_platform.__class__.__module__.split(".")[0] != "vllm_metal":
+    if backend == "cuda" and not current_platform.is_cuda():
+        raise RuntimeError("Expected NVIDIA CUDA, but vLLM selected " + str(type(current_platform)))
+    if backend == "metal" and current_platform.__class__.__module__.split(".")[0] != "vllm_metal":
         raise RuntimeError("Expected the Metal plugin, but vLLM selected " + str(type(current_platform)))
     spec = SPECS[job["precision"]]
-    measure_memory = job.get("memory_policy") == MEMORY_POLICY
+    measure_memory = bool(job.get("memory_policy"))
     started = time.perf_counter()
     llm = LLM(model=job["checkpoint"], tokenizer=job["source"], dtype=spec["dtype"],
               max_model_len=job["max_model_len"], max_num_seqs=1,
@@ -526,15 +566,21 @@ def run_worker(job):
               **({"block_size": job["cache_block_size"], "num_gpu_blocks_override": job["num_gpu_blocks"]}
                  if "num_gpu_blocks" in job else {}),
               enforce_eager=True, seed=42, trust_remote_code=False,
-              distributed_executor_backend="uni", disable_log_stats=False)
+              distributed_executor_backend="uni", disable_log_stats=False,
+              **(runtime.engine_arguments(job["precision"]) if backend == "cuda" else {}))
     engine_load_s = time.perf_counter() - started
     if job["precision"] == "FP8_A8":
-        llm.apply_model(round_fp8_activations)
-    audits = llm.apply_model(audit_loaded_model)
+        llm.apply_model(runtime.round_fp8_activations)
+    audits = llm.apply_model(runtime.audit_loaded_model)
     if len(audits) != 1:
         raise RuntimeError("Expected exactly one engine worker")
     audit = audits[0]
-    if spec["mode"]:
+    if backend == "cuda":
+        runtime.validate_audit(audit, job["precision"])
+        if "experiment_contract" in job:
+            job["experiment_contract"].update(backend=backend, weight_policy=runtime.WEIGHT_POLICY,
+                                               weight_sha256=audit["weight_sha256"])
+    elif spec["mode"]:
         if not audit["quantized_modules"] or any(m["bits"] != spec["bits"] or m["mode"] != spec["mode"]
                                                   for m in audit["quantized_modules"]):
             raise RuntimeError("Loaded quantization does not match the requested precision")
@@ -552,7 +598,7 @@ def run_worker(job):
             row = {"precision": job["precision"], "context": prompt["context"],
                    **task_metadata(prompt),
                    "trial_id": prompt.get("trial_id", 1), "status": "running",
-                   "description": spec["description"], "input_tokens": prompt["input_tokens"],
+                   "backend": backend, "description": precision_description(job["precision"], backend), "input_tokens": prompt["input_tokens"],
                    "prompt_sha256": prompt["prompt_sha256"], "generation_calls": 0,
                    "engine_load_s": engine_load_s, "runtime_audit": audit,
                    **({"experiment_contract": job["experiment_contract"]} if "experiment_contract" in job else {}),
@@ -561,9 +607,9 @@ def run_worker(job):
             rows.append(row)
             before_memory = {}
             try:
-                mx.synchronize()
+                synchronize()
                 if measure_memory:
-                    before_memory = sample_memory(llm, audit, before=True)
+                    before_memory = sample_memory(llm, audit, before=True, backend=backend)
                 # Persist the attempt before generation so interrupted trials
                 # cannot be silently repeated on resume. File I/O is not timed.
                 row["generation_calls"] = 1
@@ -571,7 +617,7 @@ def run_worker(job):
                 start = time.perf_counter()
                 generated = llm.generate([{"prompt_token_ids": prompt["prompt_token_ids"]}],
                                          sampling_params=params, use_tqdm=False)[0]
-                mx.synchronize()
+                synchronize()
                 elapsed = time.perf_counter() - start
                 completion = generated.outputs[0]
                 count = len(completion.token_ids)
@@ -582,15 +628,14 @@ def run_worker(job):
                 row.update(first_token_timing(generated, elapsed))
                 row.update(score_answer(completion.text, prompt.get("expected"), prompt.get("reasoning_fields")))
                 import resource
-                # macOS reports ru_maxrss in bytes; peak is cumulative per precision.
-                row["driver_peak_rss_bytes"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                row["driver_peak_rss_bytes"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if platform.system() == "Darwin" else 1024)
                 ttft = f"{row['ttft_s'] * 1000:.1f}ms" if row["ttft_s"] is not None else "unavailable"
                 print(f"{job['precision']} {prompt['context']} trial {row['trial_id']}: {elapsed:.3f}s, "
                       f"TTFT {ttft}, {count} output tokens", flush=True)
             except Exception as error:
                 row.update(status="error", error=str(error), generation_s=None, output=None)
             if measure_memory:
-                row.update(memory_fields(before_memory, sample_memory(llm, audit)))
+                row.update(memory_fields(before_memory, sample_memory(llm, audit, backend=backend)))
             write_json(job["result_path"], rows)  # Preserve previous cells if a later one fails.
     finally:
         shutdown = getattr(llm.llm_engine.engine_core, "shutdown", None)
@@ -730,10 +775,10 @@ def report(output_dir, hardware, settings, prompts, rows):
                "expected_answers": {p["context"]: p.get("expected") for p in prompts},
                "prompts": prompts, "summary": summaries, "results": rows})
     write_json(output_dir / "summary.json", summaries)
-    columns = ["precision", "context", "task_id", "trial_id", "status", "input_tokens", "output_tokens", "generation_calls",
+    columns = ["precision", "backend", "context", "task_id", "trial_id", "status", "input_tokens", "output_tokens", "generation_calls",
                *MEMORY_METRICS, "engine_rss_high_water_bytes", "memory_before", "memory_after", "experiment_contract",
                "generation_s", "end_to_end_tokens_per_s", "ttft_s", "ttft_source", "ttft_unavailable_reason", "engine_load_s",
-               "prepare_s", "weight_payload_bytes", "driver_peak_rss_bytes", "field_accuracy",
+               "prepare_s", "weight_payload_bytes", "weight_payload_scope", "runtime_audit", "driver_peak_rss_bytes", "field_accuracy",
                "all_fields_correct", "reasoning_accuracy", "expected", "parsed_answer", "field_correct", "schema_valid",
                "speedup_vs_fp32", "output_exact_match_fp32",
                "text_similarity_fp32", "answer_agreement_fp32", "finish_reason", "description", "error", "engine_teardown_warning", "output"]
@@ -750,7 +795,7 @@ def report(output_dir, hardware, settings, prompts, rows):
     def number(value, places=3):
         return f"{value:.{places}f}" if value is not None else "—"
     lines = ["# vLLM precision comparison: repeated-run averages", "", f"Model: `{settings['model']}`; source: `{settings.get('source_revision', 'not loaded')}`.",
-             f"Hardware: {hardware.get('chip', hardware['architecture'])}, {hardware.get('memory_bytes', 0) / 1024**3:.0f} GiB, macOS {hardware['os_version']}.", "",
+             "Hardware: " + hardware_description(hardware) + ".", "",
              f"{repeats} measured generations per precision/context ({len(settings['precisions']) * len(LEVELS) * repeats} requested in total). Batch size 1; temperature 0; seed 42; prefix caching disabled.",
              "Each round rotates context order; all precisions use the same schedule and the same token IDs. The model is loaded once per precision.",
              "Means include the first measured request. No extra benchmark warm-up is added. Engine initialization/profile/warm-up passes are outside generation timing.",
@@ -758,9 +803,15 @@ def report(output_dir, hardware, settings, prompts, rows):
              "Elapsed time includes prompt prefill, decoding, and API overhead; tokens/s is end-to-end output throughput.",
              f"Output limit: {settings['max_new_tokens']} tokens. {sum(r.get('finish_reason') == 'length' for r in rows)} returned responses reached the limit; truncated answers are retained and graded as returned.",
              "Model download, conversion, and engine loading are timed separately. First requests can include lazy kernel initialization.",
-             "FP8 uses MXFP8 E4M3 weight storage with BF16 activations; INT4 uses affine packed integer weights with BF16 activations.",
-             "This measures local Metal inference, not native CUDA FP8 arithmetic. Some tensors and reductions retain higher precision.",
+             ("CUDA FP8 uses per-channel E4M3 weights and the weight-only Marlin kernel; INT4 uses symmetric groups of 128. "
+              "Both use BF16 projection inputs. Quantization recipes differ from Metal; compare results within one backend."
+              if hardware.get("backend") == "cuda" else
+              "Metal FP8 uses MXFP8 E4M3 weights with BF16 inputs; INT4 uses affine weights. This measures local Metal inference."),
+             "FP8_A8 applies activation quantize/dequantize rounding with BF16 buffers. Some tensors and reductions retain higher precision.",
              "Weight size is the saved tensor payload, including scales and unquantized tensors; it is not total runtime memory.",
+             ("CUDA dense variants load and cast the original source directory; their payload size describes the source checkpoint. "
+              "Loaded parameter bytes and dtypes are saved in runtime_audit; FP8/INT4 sizes describe prepared CUDA files."
+              if hardware.get("backend") == "cuda" else "Prepared Metal files are audited against their requested storage format."),
              "RSS is the cumulative driver-process high-water mark, not the complete engine/GPU memory usage.", "",
              "| Precision | Context | Status | Completed / requested | Input tokens | Mean seconds ± SD | Mean TTFT ms ± SD | TTFT measured / completed | Mean tokens/s | Weight MiB | Mean correct fields | Answer pass rate | Speedup vs FP32 |",
              "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
@@ -780,7 +831,7 @@ def report(output_dir, hardware, settings, prompts, rows):
         lines += ["", "Observed runtime limitation: the installed vLLM/Metal stack logged a segmentation fault during engine shutdown for "
                   + ", ".join(warnings) + ". Completed generation results were saved before shutdown. See the corresponding engine logs; a clean teardown is not verified."]
     if "FP8_A8" in settings["precisions"]:
-        lines += ["", *write_comparison(output_dir, summaries, rows)]
+        lines += ["", *write_comparison(output_dir, summaries, rows, settings.get("backend", "metal"))]
     lines += ["", "## Tasks and reference answers", "",
               "Short, Medium and Long are different workloads. Unique receipts, competing quotes and ledger events fill their respective budgets; no repeated filler is added. "
               "Every task includes a valid JSON format example using illustrative values; the model must calculate its own answer. "
@@ -825,6 +876,7 @@ def report(output_dir, hardware, settings, prompts, rows):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    add_backend_arguments(parser)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Model configuration JSON (default: config.json beside this script)")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--model", help="Explicit model ID or local directory; overrides config")
@@ -874,28 +926,32 @@ def main():
         except Exception as error:
             previous = json.loads(Path(job["result_path"]).read_text()) if Path(job["result_path"]).exists() else []
             finished = {trial_key(row) for row in previous}
-            previous.extend(blank_rows(job["precision"], [p for p in job["prompts"] if trial_key(p) not in finished], "error", str(error)))
+            previous.extend(blank_rows(job["precision"], [p for p in job["prompts"] if trial_key(p) not in finished], "error", str(error), job.get("backend", "metal")))
             write_json(job["result_path"], previous)
             raise
         return 0
-    hardware = hardware_info()
+    hardware = hardware_info(args.backend)
+    backend = hardware["backend"]
     if args.hardware:
         print(json.dumps(hardware, indent=2))
         return 0
     output_dir = (args.output_dir or ROOT / "results" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    settings = {"model": args.model, "precisions": args.precisions, "context_token_budgets": args.context_tokens,
+    settings = {"model": args.model, "backend": backend,
+                "cuda_visible_devices": hardware.get("cuda_visible_devices"),
+                "gpu_uuid": hardware.get("gpu_uuid"),
+                "precisions": args.precisions, "context_token_budgets": args.context_tokens,
                 "max_new_tokens": args.max_new_tokens, "memory_fraction": args.memory_fraction,
                 "memory_budget_gib": args.memory_budget_gib,
                 "measured_generations_per_cell": args.repeats, "benchmark_warmup_generations": 0,
                 "seed": 42, "temperature": 0.0, "prefix_caching": False,
                 "prompt_suite": PROMPT_SUITE, "timing_policy": TIMING_POLICY,
-                "thinking_policy": args.thinking, "cache_policy": "physical-budget-to-metal-with-block-override-v1"}
-    settings.update(activation_settings(args.precisions))
+                "thinking_policy": args.thinking, "cache_policy": CACHE_POLICIES[backend]}
+    settings.update(activation_settings(args.precisions, backend))
     previous = None
     if args.resume:
         previous = json.loads((output_dir / "results.json").read_text())
-        if any(previous["settings"].get(key, "auto" if key == "thinking_policy" else None) != value
+        if any(previous["settings"].get(key, "auto" if key == "thinking_policy" else "metal" if key == "backend" else None) != value
                for key, value in settings.items() if key != "cache_policy"):
             raise ValueError("Resume settings must match the original run")
         if previous["settings"].get("cache_policy") != settings["cache_policy"]:
@@ -911,14 +967,20 @@ def main():
                     "task_description": TASK_BUILDERS[level](0)["task_description"]}
                    for level, budget in zip(LEVELS, args.context_tokens)]
         rows = [row for precision in args.precisions for row in blank_rows(
-            precision, make_trials([{**p, "prompt_sha256": None} for p in prompts], args.repeats), "planned", "Dry run; no compute performed")]
+            precision, make_trials([{**p, "prompt_sha256": None} for p in prompts], args.repeats), "planned", "Dry run; no compute performed", backend)]
         report(output_dir, hardware, settings, prompts, rows)
         return 0
     if not hardware["compatible_os"]:
-        raise RuntimeError("Use native arm64 macOS 15+ for this laptop benchmark")
+        raise RuntimeError("CUDA requires Linux; Metal requires native arm64 macOS 15+")
     missing = [name for name, version in hardware["packages"].items() if version is None]
     if missing:
-        raise RuntimeError("Missing packages: " + ", ".join(missing) + ". Run python3.13 setup_metal.py, then .venv/bin/python compare_vllm.py")
+        install = "pip install -r requirements-cuda.txt" if backend == "cuda" else "python3.13 setup_metal.py"
+        raise RuntimeError("Missing packages: " + ", ".join(missing) + ". Run " + install)
+    if backend == "cuda":
+        if not hardware.get("cuda_available"):
+            raise RuntimeError("NVIDIA CUDA is unavailable; check the driver, CUDA PyTorch and CUDA_VISIBLE_DEVICES")
+        if hardware.get("gpu_compute_capability", [0])[0] < 8:
+            raise RuntimeError("This BF16/CUDA comparison requires compute capability 8.0+ (Ampere or newer)")
     if "memory_bytes" not in hardware:
         raise RuntimeError("Cannot read physical memory; allow hardware access before running the benchmark")
     started = time.perf_counter()
@@ -947,9 +1009,14 @@ def main():
     settings["source_weight_stats"] = source_stats
     excluded = ("lm_head.weight",) if source_config.get("model_type") == "qwen3" and source_config.get("tie_word_embeddings") else ()
     settings["model_parameter_count"] = safetensors_info(source, excluded)["stored_elements"]
-    if source_config.get("model_type") != "qwen3" and source_stats["weight_payload_bytes"] * 4 > laptop_memory_budget(
+    if backend == "metal" and source_config.get("model_type") != "qwen3" and source_stats["weight_payload_bytes"] * 4 > laptop_memory_budget(
             hardware, args.memory_fraction, args.memory_budget_gib)["effective_bytes"]:
         raise RuntimeError("Base checkpoint is too large for the conservative conversion budget; choose a smaller model or raise the memory budget")
+    if backend == "cuda":
+        if source_config.get("quantization_config") or source_config.get("quantization"):
+            raise ValueError("Use an unquantized source model for comparable CUDA variants")
+        if any(source_config.get(key, 0) for key in ("num_local_experts", "num_experts")) or source_config.get("text_config"):
+            raise ValueError("CUDA comparison currently supports dense text models; MoE/multimodal recipes require separate experiments")
     max_model_len = max(p["input_tokens"] for p in prompts) + args.max_new_tokens
     settings["memory_plans"] = {precision: memory_plan(source_config, settings["model_parameter_count"], precision,
                                                       max_model_len, hardware, args.memory_fraction, args.memory_budget_gib)
@@ -970,36 +1037,43 @@ def main():
         plan = settings["memory_plans"][precision]
         if not plan["fits"]:
             print("Skipping " + precision + ": " + plan["reason"], flush=True)
-            rows.extend(blank_rows(precision, pending, "skipped", plan["reason"]))
+            rows.extend(blank_rows(precision, pending, "skipped", plan["reason"], backend))
             report(output_dir, hardware, settings, prompts, rows)
             continue
         started = time.perf_counter()
         result_path = output_dir / (precision + "_worker_results.json")
         try:
-            print("\nPreparing " + precision + ": " + SPECS[precision]["description"], flush=True)
-            checkpoint, stats, cached = prepare_checkpoint(source, revision, args.model, precision, args.model_dir)
+            print("\nPreparing " + precision + ": " + precision_description(precision, backend), flush=True)
+            if backend == "cuda":
+                import cuda_backend
+                checkpoint, stats, cached = cuda_backend.prepare_checkpoint(source, revision, args.model, precision,
+                    args.model_dir, safetensors_info, write_json)
+            else:
+                checkpoint, stats, cached = prepare_checkpoint(source, revision, args.model, precision, args.model_dir)
             preparation = {"prepare_s": time.perf_counter() - started, "checkpoint_cached": cached,
                            "weight_payload_bytes": stats["weight_payload_bytes"],
-                           "checkpoint_elements_by_dtype": stats["elements_by_dtype"]}
+                           "checkpoint_elements_by_dtype": stats["elements_by_dtype"],
+                           "weight_payload_scope": stats.get("weight_payload_scope", "Prepared checkpoint tensor payload")}
             # Conversion tensors must be released before the engine starts.
             import gc
-            import mlx.core as mx
             gc.collect()
-            mx.clear_cache()
-            job = {"precision": precision, "checkpoint": str(checkpoint), "source": str(source),
+            if backend == "metal":
+                import mlx.core as mx
+                mx.clear_cache()
+            job = {"backend": backend, "precision": precision, "checkpoint": str(checkpoint), "source": str(source),
                    "max_model_len": max_model_len, "kv_cache_bytes": plan["kv_cache_bytes"],
                    "max_new_tokens": args.max_new_tokens, "memory_fraction": plan["backend_memory_fraction"],
                    "cache_block_size": plan["cache_block_size"], "num_gpu_blocks": plan["num_gpu_blocks"],
                    "timing_policy": TIMING_POLICY,
                    "prompts": pending, "preparation": preparation, "result_path": str(result_path)}
             if "FP8_A8" in args.precisions:
-                job.update(kv_cache_dtype="bfloat16", memory_policy=MEMORY_POLICY)
+                job.update(kv_cache_dtype="bfloat16", memory_policy=settings["memory_policy"])
                 job["experiment_contract"] = {"checkpoint": str(checkpoint.resolve()), "source_revision": revision,
                     "dtype": SPECS[precision]["dtype"], "kv_cache_dtype": job["kv_cache_dtype"],
                     "kv_cache_bytes": job["kv_cache_bytes"], "cache_block_size": job["cache_block_size"],
                     "num_gpu_blocks": job["num_gpu_blocks"], "max_model_len": job["max_model_len"],
                     "max_new_tokens": job["max_new_tokens"], "memory_fraction": job["memory_fraction"],
-                    "memory_policy": MEMORY_POLICY, "timing_policy": TIMING_POLICY, "seed": 42, "temperature": 0.0}
+                    "memory_policy": settings["memory_policy"], "timing_policy": TIMING_POLICY, "seed": 42, "temperature": 0.0}
             job_path = output_dir / (precision + "_job.json")
             write_json(job_path, job)
             # Preserve prior failed initialization evidence when resuming.
@@ -1012,14 +1086,14 @@ def main():
             if result_path.exists():
                 mode_rows = json.loads(result_path.read_text())
             else:
-                mode_rows = blank_rows(precision, pending, "error", f"Worker exited {returncode}; see {precision}.log")
+                mode_rows = blank_rows(precision, pending, "error", f"Worker exited {returncode}; see {precision}.log", backend)
             rows.extend(mode_rows)
         except subprocess.TimeoutExpired:
             rows.extend(json.loads(result_path.read_text()) if result_path.exists() else [])
             finished = {trial_key(r) for r in rows if r["precision"] == precision}
-            rows.extend(blank_rows(precision, [p for p in pending if trial_key(p) not in finished], "error", "Worker timed out"))
+            rows.extend(blank_rows(precision, [p for p in pending if trial_key(p) not in finished], "error", "Worker timed out", backend))
         except Exception as error:
-            rows.extend(blank_rows(precision, pending, "error", str(error)))
+            rows.extend(blank_rows(precision, pending, "error", str(error), backend))
         for row in rows:
             if row["status"] == "running":
                 row.update(status="error", error="Worker stopped before this attempted trial returned a result",

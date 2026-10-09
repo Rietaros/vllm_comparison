@@ -1,10 +1,10 @@
-# vLLM precision comparison on Apple Silicon
+# vLLM precision comparison on Apple Silicon and NVIDIA CUDA
 
 Python benchmark for **FP32, BF16, FP8, and INT4** with **Short, Medium, and Long** context. By default it runs **10 generations per precision/context**: four precisions × three contexts × ten repeats = **120 measured requests**. The comparison reports **average time to first token (TTFT), total latency and accuracy**, plus sample standard deviation, median, minimum, and maximum. Individual measurements and answers are retained.
 
 These are repeated benchmarks of the same prompts, rather than cross-validation: there is no training step, held-out dataset, or ten independent folds. Repetition measures runtime variation and output consistency. With greedy decoding, repeated outputs can be identical; ten copies of one prompt do not provide ten independent accuracy examples.
 
-This project targets the inspected laptop: **Apple M1 Pro, 10 CPU cores, 16 GPU cores, 16 GB unified memory, macOS 15.5**. It uses the actual [vLLM-Metal plugin](https://docs.vllm.ai/projects/vllm-metal/en/stable/). The model suite compares **Qwen3-0.6B, Qwen3-1.7B, and Qwen3-4B**, configured in [config.json](config.json). The single-model runner defaults to the configured `lightweight` model, currently `Qwen/Qwen3-0.6B`; new runs use the differentiated prompts described below. Each model's precision variants share one resolved source checkpoint, with its revision saved in the results.
+The original Metal measurements used the inspected laptop: **Apple M1 Pro, 10 CPU cores, 16 GPU cores, 16 GB unified memory, macOS 15.5**. It uses the actual [vLLM-Metal plugin](https://docs.vllm.ai/projects/vllm-metal/en/stable/). The model suite compares **Qwen3-0.6B, Qwen3-1.7B, and Qwen3-4B**, configured in [config.json](config.json). The single-model runner defaults to the configured `lightweight` model, currently `Qwen/Qwen3-0.6B`; new runs use the differentiated prompts described below. Each model's precision variants share one resolved source checkpoint, with its revision saved in the results.
 
 ## Configuration and prompt files
 
@@ -59,7 +59,7 @@ These are relative size tiers for this laptop. They use the same Qwen3 architect
 
 The full matrix requests **3 models × 4 precisions × 3 contexts × 10 repeats = 360 generations**. Before starting each engine, the runner estimates weights, quantization overhead, a KV cache large enough for Long context, and 1 GiB for runtime/workspace. Both commands now default to a **10 GiB laptop budget**, selectable with `--memory-budget-gib 10`. The effective budget is capped to physical RAM and Apple's recommended GPU working set (about **10.67 GiB** on this M1 Pro). Oversized cases are marked **skipped**, with no timing or accuracy values. Budget estimates are planning checks, not hard process limits or measured peak RAM; memory and swap snapshots are retained. `--memory-fraction 0.4` selects the previous 6.4 GiB budget on this 16 GiB laptop; it is mutually exclusive with `--memory-budget-gib`.
 
-For the 4B tier, FP32 weights alone need about 15 GiB and still exceed the 10 GiB budget. BF16 weights need about 7.5 GiB and an estimated **9.12 GiB** including cache and runtime reserve, so BF16 is now eligible alongside FP8 and INT4. Medium FP32 also becomes eligible at an estimated **8.35 GiB**. The planned matrix therefore contains **330 measured slots and 30 Complex/FP32 skips** on this laptop. A machine with more RAM may allow additional formats; the script evaluates its actual hardware. This implementation targets native Apple Silicon Metal, so an NVIDIA PC needs a separate CUDA backend/quantization recipe.
+For the 4B tier, FP32 weights alone need about 15 GiB and still exceed the 10 GiB budget. BF16 weights need about 7.5 GiB and an estimated **9.12 GiB** including cache and runtime reserve, so BF16 is now eligible alongside FP8 and INT4. Medium FP32 also becomes eligible at an estimated **8.35 GiB**. The planned matrix therefore contains **330 measured slots and 30 Complex/FP32 skips** on this laptop. A machine with more RAM may allow additional formats; the script evaluates its actual hardware. The runner now also supports Linux NVIDIA servers through a separate CUDA backend and quantization recipe.
 
 Qwen3 checkpoints are converted **one tensor at a time on CPU**, with output shards targeting 128 MiB (a single larger tensor occupies its own shard). This avoids keeping a full dense 4B source and its converted model in memory together. The recipe is checked against MLX's Linear/Embedding conversions for all four formats, and the loaded engine is audited again. The three source downloads total roughly 14 GB; converted checkpoints require additional disk space. Redundant tied output-head tensors are excluded from the model parameter count and converted weights.
 
@@ -78,9 +78,60 @@ For vLLM-Metal 0.30, the runner translates the laptop budget into the backend's 
 
 The dry run plans 360 rows without downloading or computing. Resume preserves attempted measurements and validates the model list, settings, package versions and source revisions. Select a new directory to run a fresh experiment.
 
+## Run on an NVIDIA server
+
+Both runners accept `--backend auto|metal|cuda`. The default selects Metal on macOS and CUDA on Linux. CUDA requires Linux, Python 3.10–3.13, an NVIDIA driver compatible with the installed CUDA wheel, and a GPU with compute capability **8.0 or newer** for BF16 (for example A100, L4, RTX 3090/4090 or H100). See the [official vLLM GPU installation instructions](https://docs.vllm.ai/en/v0.30.0/getting_started/installation/gpu/) for driver/wheel compatibility.
+
+Create a separate CUDA environment on the server:
+
+```sh
+python3.12 -m venv .venv-cuda
+.venv-cuda/bin/python -m pip install --upgrade pip
+.venv-cuda/bin/python -m pip install -r requirements-cuda.txt
+
+# Select one physical GPU before Python imports CUDA.
+CUDA_VISIBLE_DEVICES=0 .venv-cuda/bin/python compare_vllm.py --backend cuda --hardware
+
+# One model, fixed FP8 weights and BF16 versus FP8-rounded activations.
+CUDA_VISIBLE_DEVICES=0 .venv-cuda/bin/python compare_vllm.py \
+  --backend cuda --tier lightweight --activation-comparison \
+  --memory-fraction 0.8 --repeats 10 --timeout 1200 \
+  --output-dir results/cuda-activation-lightweight
+
+# All configured tiers and the standard FP32/BF16/FP8/INT4 cases.
+CUDA_VISIBLE_DEVICES=0 .venv-cuda/bin/python compare_models.py \
+  --backend cuda --memory-fraction 0.8 --output-dir results/cuda-models
+
+# Validate either runner without installing GPU packages or downloading weights.
+python3 compare_models.py --backend cuda --activation-comparison --dry-run \
+  --output-dir results/cuda-plan
+```
+
+The CUDA requirements pin vLLM 0.30.0, Torch 2.13.0+cu129 and compressed-tensors 0.17.0, with the official CUDA 12.9 PyTorch index. Choose a matching vLLM/Torch wheel pair for another CUDA version using the official installation guide. This is a single-GPU benchmark: logical GPU zero is used even when more GPUs are visible. `CUDA_VISIBLE_DEVICES` selects it; tensor/data parallelism is not enabled. Hardware reports record GPU name, UUID, compute capability, VRAM, CUDA runtime, package versions and device visibility.
+
+| Case | CUDA weights | CUDA projection inputs |
+|---|---|---|
+| `FP32` | Original checkpoint cast by vLLM to FP32 | FP32 |
+| `BF16` | Original checkpoint cast by vLLM to BF16 | BF16 |
+| `FP8` | Per-channel FP8 E4M3, weight-only Marlin | BF16 |
+| `FP8_A8` | The same FP8 checkpoint and loaded parameter bytes | Dynamic per-token E4M3 rounding, returned to BF16 |
+| `INT4` | Symmetric packed INT4, groups of 128, Marlin | BF16 |
+
+[cuda_backend.py](cuda_backend.py) prepares FP8 and INT4 with data-free round-to-nearest quantization. It discovers standard Linear modules using a model on the Torch meta device, then reads and converts source tensors individually on CPU and writes bounded shards using the official compressed-tensors quantization and packing routines. Token embeddings and the output head stay BF16. No calibration prompts or additional model downloads are used. CUDA checkpoints use a separate cache identity from MLX checkpoints; both activation cases reuse one cached FP8 directory. Dense FP32/BF16 cases reuse the source directory, so their saved payload size describes the original checkpoint; `runtime_audit.loaded_weight_bytes` describes the loaded parameters.
+
+CUDA pins **TRITON_ATTN** for all formats, which supports FP32 and BF16, and disables Torch compilation and CUDA graphs for this controlled comparison. These settings favor comparability and working activation hooks over maximum serving throughput. FP8 projections must load the [weight-only Marlin kernel](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w8a16_fp8.py); the runtime audit rejects a native W8A8 replacement. The CUDA activation experiment applies per-token FP8 quantize/dequantize rounding only to quantized Linear inputs. Embedding lookups, the unquantized output head, attention, normalization and the BF16 KV cache retain their existing precision. It measures rounding effects and overhead, without assuming activation-memory savings.
+
+`--memory-fraction` means a fraction of **selected GPU VRAM** on CUDA and unified physical RAM on Metal. CUDA allows up to 0.95; Metal retains its 0.7 limit. The default absolute budget is still 10 GiB. CUDA plans account for dense embedding/head matrices, KV blocks and a 2 GiB runtime reserve; requests above the budget are skipped. Budgets are estimates, rather than hard process limits, and vLLM can still reject insufficient free VRAM at startup.
+
+CUDA activation reports include engine-process Torch allocated/reserved memory, allocated/reserved peaks reset before each request, extra allocated peak above the starting allocation, device-wide used VRAM after the request, and engine RSS. Torch counters exclude allocations outside its allocator; device-wide memory includes other GPU users. These scopes overlap and must not be added. Measurements run in the audited engine process outside TTFT/latency timing. Missing counters remain unavailable with coverage counts. SHA-256 of loaded parameter bytes, including scales, must match across paired CUDA trials alongside the existing checkpoint/prompt/cache/settings contract.
+
+Dense text models with standard Linear projections are supported; the configured Qwen3 tiers are the default. MoE and multimodal recipes require separate experiments and are rejected. CUDA and Metal use different quantization recipes, so backend results should be interpreted separately. Resume checks backend, GPU identity/visibility, policies and package versions; use a fresh output directory when changing platforms.
+
+Validation in this workspace covers real CPU checkpoint conversion and FP8 rounding, mocked CUDA engine/memory routing, shared scoring/reporting, and the existing Metal tests. GPU inference and CUDA timings still require execution on an NVIDIA server. To run the tests there, use `.venv-cuda/bin/python -m unittest discover -s tests -v`; Metal-specific tests are skipped outside Apple Silicon.
+
 ## Compare BF16 and FP8-rounded activations with fixed FP8 weights
 
-Use `--activation-comparison` on either runner:
+Use `--activation-comparison` on either runner. The examples and MXFP8 details in this section describe the Metal backend; the NVIDIA section above describes its CUDA counterpart:
 
 ```sh
 # One configured model: 2 activation cases × 3 contexts × 10 repeats = 60 requests.
@@ -168,7 +219,7 @@ For a custom unquantized model, use `--model MODEL_ID_OR_LOCAL_DIRECTORY` and op
 
 FP8 here is [MLX's MXFP8](https://ml-explore.github.io/mlx/build/html/python/_autosummary/mlx.core.quantized_matmul.html), not INT8. Packed MXFP8 and INT4 tensors appear as `uint32` containers in the saved files; their quantization metadata identifies the actual representation. Checkpoint headers and loaded engine modules are inspected to verify the requested format.
 
-The M1 Pro runs Metal kernels for these formats. This comparison measures their local execution, including dequantization, and does **not** claim native FP8 tensor-core or pure INT4 arithmetic. Higher precision remains in scales, some unquantized parameters, and reductions. CUDA [FP8 W8A8](https://docs.vllm.ai/en/stable/features/quantization/index.html) is a different hardware/activation recipe and would require a separate comparison.
+The M1 Pro runs Metal kernels for these formats. This comparison measures their local execution, including dequantization, and does **not** claim native FP8 tensor-core or pure INT4 arithmetic. Higher precision remains in scales, some unquantized parameters, and reductions. Native CUDA FP8 W8A8 is a different hardware/activation recipe. The NVIDIA section above describes this project's weight-only CUDA kernels and explicit activation rounding.
 
 The default source model was published in BF16. Casting it to FP32 allows FP32 execution; it cannot recover precision absent from the original weights. The FP32 case is the baseline for this checkpoint, not an original FP32 training checkpoint.
 

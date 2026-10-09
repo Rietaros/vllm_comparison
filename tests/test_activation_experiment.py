@@ -1,3 +1,5 @@
+import importlib.util
+import platform
 import contextlib
 import io
 import json
@@ -39,6 +41,7 @@ class ActivationExperimentTests(unittest.TestCase):
         nn.quantize(model, mode="mxfp8", bits=8, group_size=32)
         return model
 
+    @unittest.skipUnless(platform.system() == "Darwin" and importlib.util.find_spec("mlx"), "Requires Apple Metal/MLX")
     def test_activation_rounding_reuses_weights_matches_qdq_and_preserves_lookups(self):
         import mlx.core as mx
         model = self.make_model()
@@ -69,6 +72,7 @@ class ActivationExperimentTests(unittest.TestCase):
         self.assertEqual(before_audit["loaded_weight_bytes"], after_audit["loaded_weight_bytes"])
         self.assertTrue(all(m["activation_quantization"] == activation.ACTIVATION_POLICY for m in after_audit["quantized_modules"]))
 
+    @unittest.skipUnless(platform.system() == "Darwin" and importlib.util.find_spec("mlx"), "Requires Apple Metal/MLX")
     def test_invalid_model_is_rejected_before_any_projection_changes(self):
         import mlx.nn as nn
         model = self.make_model()
@@ -78,6 +82,7 @@ class ActivationExperimentTests(unittest.TestCase):
             activation.round_fp8_activations(model)
         self.assertIs(model.projection, original)
 
+    @unittest.skipUnless(platform.system() == "Darwin" and importlib.util.find_spec("mlx"), "Requires Apple Metal/MLX")
     def test_both_activation_cases_reuse_the_exact_checkpoint_and_cache_plan(self):
         import mlx.core as mx
         # Keep NumPy's native extension loaded across the sys.modules mock.
@@ -111,6 +116,7 @@ class ActivationExperimentTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parse(["--activation-comparison", "--precisions", "INT4"])
 
+    @unittest.skipUnless(platform.system() == "Darwin" and importlib.util.find_spec("mlx"), "Requires Apple Metal/MLX")
     def test_worker_routes_rounding_and_memory_to_engine_and_reports_real_mlx_counters(self):
         import mlx.core as mx
         observed = []

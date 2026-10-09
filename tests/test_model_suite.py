@@ -1,3 +1,5 @@
+import importlib.util
+import platform
 import json
 import sys
 import tempfile
@@ -33,6 +35,7 @@ class ModelSuiteTests(unittest.TestCase):
         low_gpu_budget = {**hardware, "metal_device": {"max_recommended_working_set_size": 2 * 1024**3}}
         self.assertFalse(bench.memory_plan(config, 4_022_000_000, "INT4", 4192, low_gpu_budget, .4)["fits"])
 
+    @unittest.skipUnless(platform.system() == "Darwin" and importlib.util.find_spec("mlx"), "Requires Apple Metal/MLX")
     def test_streaming_matches_mlx_layers_and_preserves_bfloat16_source(self):
         import mlx.core as mx
         import mlx.nn as nn

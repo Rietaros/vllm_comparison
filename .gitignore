@@ -1,5 +1,6 @@
 # Python environments and generated caches
 .venv/
+.venv-cuda/
 .bootstrap/
 .cache/
 __pycache__/
