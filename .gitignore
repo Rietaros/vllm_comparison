@@ -1,0 +1,14 @@
+# Python environments and generated caches
+.venv/
+.bootstrap/
+.cache/
+__pycache__/
+*.py[cod]
+
+# Downloaded/converted weights and benchmark output
+models/
+results/
+installation.json
+
+# macOS metadata
+.DS_Store

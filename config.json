@@ -1,0 +1,7 @@
+{
+  "models": {
+    "lightweight": "Qwen/Qwen3-0.6B",
+    "medium": "Qwen/Qwen3-1.7B",
+    "complex": "Qwen/Qwen3-4B"
+  }
+}
