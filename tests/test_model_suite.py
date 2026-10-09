@@ -152,7 +152,8 @@ class ModelSuiteTests(unittest.TestCase):
         answer = '{"project":"Project ORCHID","city":"Bandung","total_units":42}'
         row = {"precision": "INT4", "context": "Short", "trial_id": 1, "status": "ok",
                "generation_calls": 1, "generation_s": 1, "output_tokens": 10,
-               "end_to_end_tokens_per_s": 10, "output": answer, **bench.score_answer(answer)}
+               "end_to_end_tokens_per_s": 10, "output": answer,
+               **bench.score_answer(answer, {"project": "ORCHID", "city": "Bandung", "total_units": 42})}
         summary = bench.summarize_rows([row], ["INT4"], 1)[0]
         self.assertEqual(summary["project_correct_rate"], 0)
         self.assertEqual(summary["city_correct_rate"], 1)

@@ -26,6 +26,45 @@ def contract():
 
 
 class ActivationExperimentTests(unittest.TestCase):
+    def test_mixed_precision_run_keeps_fp32_cache_and_pins_only_fp8_pairs(self):
+        jobs = {}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            source.mkdir()
+            bench.write_json(source / "config.json", {"model_type": "qwen3", "hidden_size": 32,
+                "num_hidden_layers": 1, "num_attention_heads": 1, "num_key_value_heads": 1})
+            stats = {"stored_elements": 32, "weight_payload_bytes": 64, "elements_by_dtype": {"BF16": 32}}
+            hardware = {"backend": "metal", "os": "Darwin", "os_version": "15.5", "architecture": "arm64",
+                        "memory_bytes": 16 * 1024**3, "compatible_os": True, "packages": {}}
+            modules = {"mlx": types.ModuleType("mlx"), "mlx.core": types.SimpleNamespace(clear_cache=lambda: None),
+                       "transformers": types.SimpleNamespace(AutoTokenizer=types.SimpleNamespace(
+                           from_pretrained=lambda *args, **kwargs: WordTokenizer()))}
+
+            def inspect_job(path, log, timeout):
+                job = json.loads(path.read_text())
+                jobs[job["precision"]] = job
+                bench.write_json(job["result_path"], bench.blank_rows(job["precision"], job["prompts"], "error", "No engine in this test"))
+                return 1
+
+            args = ["compare_vllm.py", "--backend", "metal", "--model", "test", "--repeats", "1",
+                    "--precisions", "FP32", "BF16", "FP8", "INT4", "FP8_A8", "--context-tokens", "128", "512", "2048",
+                    "--output-dir", str(Path(directory) / "output")]
+            with patch.dict(sys.modules, modules), patch.object(sys, "argv", args), \
+                    patch.object(bench, "hardware_info", return_value=hardware), \
+                    patch.object(bench, "resolve_source", return_value=(source, "test")), \
+                    patch.object(bench, "safetensors_info", return_value=stats), \
+                    patch.object(bench, "prepare_checkpoint", return_value=(source, stats, True)), \
+                    patch.object(bench, "execute_worker", side_effect=inspect_job), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(bench.main(), 1)  # The fake engine intentionally generates no answers.
+            self.assertEqual(set(jobs), {"FP32", "BF16", "FP8", "INT4", "FP8_A8"})
+            for precision in ("FP32", "BF16", "INT4"):
+                self.assertNotIn("kv_cache_dtype", jobs[precision])
+                self.assertNotIn("experiment_contract", jobs[precision])
+            for precision in activation.ACTIVATION_PRECISIONS:
+                self.assertEqual(jobs[precision]["kv_cache_dtype"], "bfloat16")
+                self.assertIn("experiment_contract", jobs[precision])
+            self.assertEqual(jobs["FP8"]["experiment_contract"], jobs["FP8_A8"]["experiment_contract"])
+
     def make_model(self):
         import mlx.core as mx
         import mlx.nn as nn

@@ -1,0 +1,14 @@
+{
+  "mode": "generated",
+  "task_id": "supplier-selection",
+  "description": "Filter competing quotes, calculate landed costs and rank eligible suppliers.",
+  "expected": {
+    "vendor": {"$ref": "vendor"},
+    "landed_cost": {"$ref": "landed_cost"},
+    "eligible_vendors": {"$ref": "eligible_vendors"},
+    "delivery_days": {"$ref": "delivery_days"}
+  },
+  "reasoning_fields": ["landed_cost", "eligible_vendors", "delivery_days"],
+  "output_example": {"vendor": "EXAMPLE", "landed_cost": 1500, "eligible_vendors": 2, "delivery_days": 3},
+  "comparison": {"allow_extra_fields": false, "case_sensitive": true}
+}

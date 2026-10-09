@@ -39,13 +39,14 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(prompts, benchmark.make_prompts(WordTokenizer(), [128, 512, 2048]))
 
     def test_accuracy_is_ground_truth_not_text_similarity(self):
-        correct = benchmark.score_answer('{"city":"Bandung","total_units":42,"project":"ORCHID"}')
+        expected = {"city": "Bandung", "total_units": 42, "project": "ORCHID"}
+        correct = benchmark.score_answer('{"city":"Bandung","total_units":42,"project":"ORCHID"}', expected)
         self.assertTrue(correct["all_fields_correct"])
         for value in ("true", '"42"', "42.0", "41"):
-            score = benchmark.score_answer('{"city":"Bandung","total_units":' + value + ',"project":"ORCHID"}')
+            score = benchmark.score_answer('{"city":"Bandung","total_units":' + value + ',"project":"ORCHID"}', expected)
             self.assertFalse(score["all_fields_correct"])
             self.assertAlmostEqual(score["field_accuracy"], 2 / 3)
-        self.assertEqual(benchmark.score_answer("invalid")['field_accuracy'], 0)
+        self.assertEqual(benchmark.score_answer("invalid", expected)['field_accuracy'], 0)
 
     def test_task_specific_scoring_enforces_boolean_types_and_exact_schema(self):
         expected = short_task()["expected"]
@@ -255,7 +256,8 @@ class ComparisonTests(unittest.TestCase):
                     raise RuntimeError("controlled generation failure")
                 expected = next(p["expected"] for p in job["prompts"]
                                 if p["prompt_token_ids"] == prompts[0]["prompt_token_ids"])
-                completion = types.SimpleNamespace(text=json.dumps(expected), token_ids=[1, 2], finish_reason="stop")
+                completion = types.SimpleNamespace(text=json.dumps({**expected, "extra_note": "accepted by configuration"}),
+                                                   token_ids=[1, 2], finish_reason="stop")
                 return [types.SimpleNamespace(outputs=[completion], metrics=None)]
         metal = types.SimpleNamespace(synchronize=lambda: None)
         platform_type = type("MetalPlatform", (), {"__module__": "vllm_metal.platform"})
@@ -267,6 +269,8 @@ class ComparisonTests(unittest.TestCase):
                    "max_new_tokens": 96, "memory_fraction": 0.35, "preparation": {},
                    "result_path": str(Path(directory) / "worker.json"),
                    "prompts": benchmark.make_trials(benchmark.make_prompts(WordTokenizer(), [128, 512, 2048]), 10)}
+            for prompt in job["prompts"]:
+                prompt["comparison"]["allow_extra_fields"] = True
             rows = benchmark.run_worker(job)
             self.assertEqual(len(calls), 30)
             self.assertTrue(all(len(requests) == 1 for requests in calls))

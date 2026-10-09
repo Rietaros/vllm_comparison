@@ -171,6 +171,9 @@ def comparison_rows(summaries, trials, backend="metal"):
             for field in ("experiment_contract", "prompt_sha256", "input_tokens", "expected"):
                 if a.get(field) is None or a.get(field) != b.get(field):
                     raise ValueError(f"Activation comparison mismatch: {model or tier or ''}/{context}/{trial_id}: {field}")
+            for field in ("reasoning_fields", "comparison", "task_mode"):
+                if a.get(field) != b.get(field):
+                    raise ValueError(f"Activation comparison mismatch: {model or tier or ''}/{context}/{trial_id}: {field}")
             verified += 1
         item = {"tier": tier, "model": model, "context": context, "verified_trial_pairs": verified,
                 "bf16_completed": baseline["trials_successful"] if baseline else 0,

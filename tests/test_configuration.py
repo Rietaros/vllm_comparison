@@ -72,6 +72,7 @@ class ConfigurationTests(unittest.TestCase):
             for name in builders:
                 text = (original_dir / (name + ".md")).read_text(encoding="utf-8")
                 (Path(directory) / (name + ".md")).write_text(text + f"Custom {name} instructions.\n", encoding="utf-8")
+                (Path(directory) / (name + ".json")).write_text((original_dir / (name + ".json")).read_text())
             with patch.object(prompt_tasks, "PROMPT_DIR", Path(directory)):
                 for name, builder in builders.items():
                     task = builder(7)
@@ -81,6 +82,7 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_invalid_templates_fail_before_context_fitting(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(prompt_tasks, "PROMPT_DIR", Path(directory)):
+            (Path(directory) / "short.json").write_text((Path(prompt_tasks.__file__).parent / "prompts/short.json").read_text())
             path = Path(directory) / "short.md"
             for text, message in (("", "empty"), ("No records", "must include"),
                                   ("$receipts $unknown", "Invalid placeholder"), ("$receipts $", "Invalid placeholder")):

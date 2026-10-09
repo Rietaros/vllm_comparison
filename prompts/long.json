@@ -1,0 +1,14 @@
+{
+  "mode": "generated",
+  "task_id": "shipment-reconciliation",
+  "description": "Reconcile a multi-document ledger, apply corrections and the latest policy, then calculate a dispatch decision.",
+  "expected": {
+    "destination": {"$ref": "destination"},
+    "available_units": {"$ref": "available_units"},
+    "shortfall_units": {"$ref": "shortfall_units"},
+    "action": {"$ref": "action"}
+  },
+  "reasoning_fields": ["available_units", "shortfall_units", "action"],
+  "output_example": {"destination": "Example City", "available_units": 50, "shortfall_units": 25, "action": "REORDER"},
+  "comparison": {"allow_extra_fields": false, "case_sensitive": true}
+}

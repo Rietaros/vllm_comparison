@@ -28,6 +28,8 @@ The implementation is in [activation_experiment.py](../activation_experiment.py)
 
 Both cases resolve to the same cached `FP8` checkpoint without converting a second copy. Each runs in a separate engine process with identical prompt token IDs and reference answers, BF16 KV dtype, cache block size/count, input/output limits, seed, decoding settings and rotating context schedule. Requested cache/settings and checkpoint identity are saved per trial. Reports reject mismatched paired attempts; successful-pair counts accompany the results. Speedup is omitted when the successful trial IDs differ. Sequential engine execution still permits system-load drift; first-request compilation work is included in latency.
 
+You can include `FP8_A8` with other formats using `--precisions FP32 BF16 FP8 INT4 FP8_A8`. Only the paired `FP8` / `FP8_A8` cases explicitly pin BF16 cache storage. Other formats use the backend's default cache dtype; Metal FP32 requires an FP32 cache. Memory sampling is enabled for all selected formats in this combined run.
+
 The experiment retains standard accuracy, TTFT and total-latency measurements, and adds **engine-process memory** outside the timed request:
 
 - MLX active allocation before/after each request, allocator cache after it, and active allocation peak reset before each request.
@@ -57,7 +59,9 @@ The default source model was published in BF16. Casting it to FP32 allows FP32 e
 
 ## Prompts and comparison
 
-Short, Medium, and Long use input budgets of **256, 1,024, and 4,096 tokens**, including the model's chat template. [prompt_tasks.py](../prompt_tasks.py) defines the data and reference calculations for three different tasks under the version `differentiated-json-examples-v3`, with prompt text loaded from [prompts/short.md](../prompts/short.md), [prompts/normal.md](../prompts/normal.md), and [prompts/long.md](../prompts/long.md). Complete, unique data records are added until the next record would exceed the budget; no repeated filler is used. All precisions receive exactly the same token IDs and reference answer for a given context. The token IDs, token counts, hashes, structured task data, JSON examples and references are saved.
+Short, Medium, and Long use input budgets of **256, 1,024, and 4,096 tokens**, including the model's chat template. Suite version `editable-prompts-and-expectations-v4` pairs [prompts/short.md](../prompts/short.md), [prompts/normal.md](../prompts/normal.md), and [prompts/long.md](../prompts/long.md) with their `.json` expectation files. In `generated` mode, [prompt_tasks.py](../prompt_tasks.py) adds complete, unique records until the next record would exceed the budget. Expected values resolve `{"$ref": "field"}` against the calculated reference values after fitting. Literal JSON values are also supported. In `static` mode, the Markdown is used literally, and the JSON file supplies a fixed expected answer; no records, substitution, or padding are added. Actual static prompt sizes must fit the budgets, but need not be distinct.
+
+Expectation files also configure task descriptions, illustrative output examples, reasoning fields, and comparison options. [answer_comparison.py](../answer_comparison.py) performs the common JSON scoring. The exact prompts, resolved expectations, comparison options, token IDs, and hashes are saved in each run. The suite identity hashes all Markdown and expectation files, including the shared system prompt; resume rejects answer-only or rule-only changes even if token IDs stay the same. Suites reject changed task definitions between models, and activation pairs must share scoring rules and reasoning fields.
 
 | Context | Task | What the model must do | Input tokens / records in the Qwen3 rerun |
 |---|---|---|---:|
@@ -65,7 +69,7 @@ Short, Medium, and Long use input budgets of **256, 1,024, and 4,096 tokens**, i
 | Medium | Supplier selection | Filter 20 offers by certification, capacity and delivery deadline; calculate costs; choose the best eligible offer and count eligible suppliers | 992 / 20 offers |
 | Long | Shipment reconciliation | Read a site directory, stock policy, 77 movements, four correction notices and a superseding memo; calculate available stock, shortfall and action | 4,065 / 77 movements |
 
-Every prompt now includes a valid example of its requested JSON schema. The examples are explicitly labeled as illustrative, and models must calculate the actual answer:
+Every default generated prompt includes a valid example of its requested JSON schema. The examples are explicitly labeled as illustrative, and models must calculate the actual answer:
 
 | Context | Example output format |
 |---|---|
@@ -75,13 +79,13 @@ Every prompt now includes a valid example of its requested JSON schema. The exam
 
 Integers must be evaluated numbers, rather than expressions such as `17 + 25`. The examples count toward the input budgets, so this version fits fewer records than the previous prompts. Budget, examples and record counts changed together; comparisons to earlier runs do not isolate the effect of any one change.
 
-The reference answer is computed from the exact records included after tokenizer fitting. For the three Qwen3 models the token IDs and references were verified identical across all tiers. With other tokenizers, fitting may include different numbers of records, so check their saved prompts before drawing comparisons across models. Precision comparisons within a model always use the same input.
+For generated tasks, the reference answer is computed from the exact records included after tokenizer fitting. For the three Qwen3 models the default token IDs and references were previously verified identical across all tiers. With other tokenizers, fitting may include different numbers of records, so check their saved prompts before drawing comparisons across models. Precision comparisons within a model always use the same input.
 
 The tasks differ in both length and reasoning difficulty. Differences between Short, Medium and Long therefore describe different workloads; they do not isolate the effect of length. Ten repetitions of each fixed task measure timing variability, not general accuracy across a dataset. Historical measurements using the ORCHID/Bandung question and repeated archive sentences are summarized in [previous_results.md](previous_results.md); their generated files are not tracked in Git. Resume rejects a different prompt-suite version or different prompt hashes.
 
 Greedy decoding (`temperature=0`, seed 42), batch size 1, a common output limit, and disabled prefix caching keep the comparison consistent. Output can stop early at EOS, so the results record output token counts and finish reasons. The default output limit of 96 tokens accommodates all three compact JSON schemas; any truncated answer is retained and graded as returned.
 
-An otherwise valid JSON object inside a Markdown code fence is accepted. Field values and types must match exactly: a string, float or boolean cannot substitute for an integer, and integer `1` cannot substitute for boolean `true`. Full-answer pass also requires exactly the requested keys. Invalid JSON scores false on every field. Reports separate JSON validity, per-field accuracy, reasoning-field accuracy and full-answer pass rate.
+An otherwise valid JSON object inside a Markdown code fence is accepted. JSON types match exactly: a string, float or boolean cannot substitute for an integer, and integer `1` cannot substitute for boolean `true`. By default strings are case-sensitive and full-answer pass requires exactly the expected keys. The task's `comparison` object can set `case_sensitive` to `false` or `allow_extra_fields` to `true` (including nested objects). Required fields must still be present, including fields whose expected value is `null`. Invalid or nonfinite JSON scores false on every field. `reasoning_fields` selects a subset of expected fields; an empty list leaves reasoning accuracy unavailable. Reports separate JSON validity, per-field accuracy, reasoning-field accuracy and full-answer pass rate.
 
 Each precision loads its model once and runs ten rounds. Context order rotates between rounds (`Short → Medium → Long`, then `Medium → Long → Short`, then `Long → Short → Medium`) using the same schedule for every precision. All ten measurements enter the average, including the first request. No extra benchmark warm-up is added; vLLM's engine initialization and internal profiling happen outside the timed requests. Rotation spreads context measurements across the run; it does not eliminate drift between the sequential precision engines.
 

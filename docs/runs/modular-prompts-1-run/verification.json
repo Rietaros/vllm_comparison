@@ -1,0 +1,252 @@
+{
+  "verified_utc": "2026-10-09T08:49:41.891945+00:00",
+  "backend": "metal",
+  "requested": 45,
+  "successful": 42,
+  "memory_skipped": 3,
+  "failed": 0,
+  "generation_attempts": 42,
+  "repeats_per_case": 1,
+  "ttft_measured": 42,
+  "preserved_completed_trials": 39,
+  "verified_activation_pairs": 9,
+  "task_suite_sha256": "d6771e0eb046743e6014ae3440241bef634b5efe14745f45d03ead942da53344",
+  "models": [
+    {
+      "tier": "lightweight",
+      "model": "Qwen/Qwen3-0.6B",
+      "original_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+      "source": "models/7b50efe10ce32606/BF16",
+      "source_format": "local dense BF16 conversion"
+    },
+    {
+      "tier": "medium",
+      "model": "Qwen/Qwen3-1.7B",
+      "original_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "source": "models/7ec86880db931fb2/BF16",
+      "source_format": "local dense BF16 conversion"
+    },
+    {
+      "tier": "complex",
+      "model": "Qwen/Qwen3-4B",
+      "original_revision": "1cfa9a7208912126459214e8b04321603b3df60c",
+      "source": "models/e15b00bc84c6b5ee/BF16",
+      "source_format": "local dense BF16 conversion"
+    }
+  ],
+  "resolved_tasks": [
+    {
+      "tier": "lightweight",
+      "context": "Short",
+      "input_tokens": 256,
+      "prompt_sha256": "5c73150e9ab3f17c89d0ccdffbb081d84391ae5e1b06161188f94be4a80a021e",
+      "expected": {
+        "item": "MONITOR",
+        "available_units": 68,
+        "fulfillable": true
+      },
+      "comparison": {
+        "allow_extra_fields": false,
+        "case_sensitive": true
+      },
+      "reasoning_fields": [
+        "available_units",
+        "fulfillable"
+      ]
+    },
+    {
+      "tier": "lightweight",
+      "context": "Medium",
+      "input_tokens": 992,
+      "prompt_sha256": "14c864cc370afb2fc188bea64263af2466459e9c1f10e662cc3a1c47ed453f2b",
+      "expected": {
+        "vendor": "TAMBORA",
+        "landed_cost": 1365,
+        "eligible_vendors": 7,
+        "delivery_days": 4
+      },
+      "comparison": {
+        "allow_extra_fields": false,
+        "case_sensitive": true
+      },
+      "reasoning_fields": [
+        "landed_cost",
+        "eligible_vendors",
+        "delivery_days"
+      ]
+    },
+    {
+      "tier": "lightweight",
+      "context": "Long",
+      "input_tokens": 4065,
+      "prompt_sha256": "6cf08e641767b8844026ed43f7123c5f079ed371901a776e265f1a84d6fc3e8a",
+      "expected": {
+        "destination": "Surabaya",
+        "available_units": 215,
+        "shortfall_units": 205,
+        "action": "REORDER"
+      },
+      "comparison": {
+        "allow_extra_fields": false,
+        "case_sensitive": true
+      },
+      "reasoning_fields": [
+        "available_units",
+        "shortfall_units",
+        "action"
+      ]
+    },
+    {
+      "tier": "medium",
+      "context": "Short",
+      "input_tokens": 256,
+      "prompt_sha256": "5c73150e9ab3f17c89d0ccdffbb081d84391ae5e1b06161188f94be4a80a021e",
+      "expected": {
+        "item": "MONITOR",
+        "available_units": 68,
+        "fulfillable": true
+      },
+      "comparison": {
+        "allow_extra_fields": false,
+        "case_sensitive": true
+      },
+      "reasoning_fields": [
+        "available_units",
+        "fulfillable"
+      ]
+    },
+    {
+      "tier": "medium",
+      "context": "Medium",
+      "input_tokens": 992,
+      "prompt_sha256": "14c864cc370afb2fc188bea64263af2466459e9c1f10e662cc3a1c47ed453f2b",
+      "expected": {
+        "vendor": "TAMBORA",
+        "landed_cost": 1365,
+        "eligible_vendors": 7,
+        "delivery_days": 4
+      },
+      "comparison": {
+        "allow_extra_fields": false,
+        "case_sensitive": true
+      },
+      "reasoning_fields": [
+        "landed_cost",
+        "eligible_vendors",
+        "delivery_days"
+      ]
+    },
+    {
+      "tier": "medium",
+      "context": "Long",
+      "input_tokens": 4065,
+      "prompt_sha256": "6cf08e641767b8844026ed43f7123c5f079ed371901a776e265f1a84d6fc3e8a",
+      "expected": {
+        "destination": "Surabaya",
+        "available_units": 215,
+        "shortfall_units": 205,
+        "action": "REORDER"
+      },
+      "comparison": {
+        "allow_extra_fields": false,
+        "case_sensitive": true
+      },
+      "reasoning_fields": [
+        "available_units",
+        "shortfall_units",
+        "action"
+      ]
+    },
+    {
+      "tier": "complex",
+      "context": "Short",
+      "input_tokens": 256,
+      "prompt_sha256": "5c73150e9ab3f17c89d0ccdffbb081d84391ae5e1b06161188f94be4a80a021e",
+      "expected": {
+        "item": "MONITOR",
+        "available_units": 68,
+        "fulfillable": true
+      },
+      "comparison": {
+        "allow_extra_fields": false,
+        "case_sensitive": true
+      },
+      "reasoning_fields": [
+        "available_units",
+        "fulfillable"
+      ]
+    },
+    {
+      "tier": "complex",
+      "context": "Medium",
+      "input_tokens": 992,
+      "prompt_sha256": "14c864cc370afb2fc188bea64263af2466459e9c1f10e662cc3a1c47ed453f2b",
+      "expected": {
+        "vendor": "TAMBORA",
+        "landed_cost": 1365,
+        "eligible_vendors": 7,
+        "delivery_days": 4
+      },
+      "comparison": {
+        "allow_extra_fields": false,
+        "case_sensitive": true
+      },
+      "reasoning_fields": [
+        "landed_cost",
+        "eligible_vendors",
+        "delivery_days"
+      ]
+    },
+    {
+      "tier": "complex",
+      "context": "Long",
+      "input_tokens": 4065,
+      "prompt_sha256": "6cf08e641767b8844026ed43f7123c5f079ed371901a776e265f1a84d6fc3e8a",
+      "expected": {
+        "destination": "Surabaya",
+        "available_units": 215,
+        "shortfall_units": 205,
+        "action": "REORDER"
+      },
+      "comparison": {
+        "allow_extra_fields": false,
+        "case_sensitive": true
+      },
+      "reasoning_fields": [
+        "available_units",
+        "shortfall_units",
+        "action"
+      ]
+    }
+  ],
+  "engine_teardown_warnings": [
+    "Complex/FP8",
+    "Complex/FP8_A8",
+    "Complex/INT4",
+    "Lightweight/BF16",
+    "Lightweight/FP32",
+    "Lightweight/FP8",
+    "Lightweight/FP8_A8",
+    "Lightweight/INT4",
+    "Medium/BF16",
+    "Medium/FP8",
+    "Medium/FP8_A8",
+    "Medium/INT4"
+  ],
+  "checks": [
+    "39 prior outputs, timings, references, and memory snapshots unchanged after resume",
+    "unique model/precision/context/trial keys",
+    "one generation per measured case",
+    "only Complex/FP32 skipped by memory plan",
+    "reference answers independently recomputed from fitted data",
+    "saved accuracy scores match configured comparisons",
+    "valid TTFT on every successful request",
+    "fixed FP8 checkpoint/cache/settings and expected-answer contracts verified for all nine pairs"
+  ],
+  "unit_tests": {
+    "count": 62,
+    "passed": 62,
+    "skipped": 0,
+    "python": "3.12.15"
+  }
+}

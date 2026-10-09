@@ -27,6 +27,8 @@ def collect_results(output_dir, settings):
         data = json.loads(path.read_text())
         if data["settings"]["model"] != model:
             raise ValueError("Model identity mismatch in " + str(path))
+        if settings.get("task_suite_sha256") and data["settings"].get("task_suite_sha256") != settings["task_suite_sha256"]:
+            raise ValueError("Prompt/expectation files changed between model runs: " + str(path))
         summaries.extend({**metadata, **item} for item in data["summary"])
         trials.extend({**metadata, **row} for row in data["results"])
         parameter_count = data["settings"].get("model_parameter_count")
@@ -40,7 +42,8 @@ def collect_results(output_dir, settings):
                        "memory_plans": data["settings"].get("memory_plans"),
                        "enable_thinking": data["settings"].get("enable_thinking"),
                        "prompts": [{key: prompt.get(key) for key in ("context", "task_id", "task_description",
-                                     "input_tokens", "record_count", "prompt_sha256", "expected", "reasoning_fields", "output_example")}
+                                     "input_tokens", "record_count", "prompt_sha256", "expected", "reasoning_fields", "output_example",
+                                     "task_mode", "comparison")}
                                    for prompt in data.get("prompts", [])],
                        "report": str(path.parent / "comparison.md"),
                        "hardware": data["hardware"]})
@@ -92,18 +95,18 @@ def suite_report(output_dir, hardware, settings):
             lines.append(f"| {item['tier']} | {item['model']} | {number(count / 1e9 if count else None, 3)}B | {precision} | "
                          f"{number(plan['estimated_runtime_bytes'] / 1024**3)} | {number(plan['runtime_budget_bytes'] / 1024**3)} | "
                          f"{'Fits configured budget' if plan['fits'] else 'Skipped'} |")
-    lines += ["", "Runtime estimates include weights, group-scale allowance, a context-sized KV cache and 1 GiB workspace/engine reserve. "
-              "The requested budget is capped to physical RAM and Apple's recommended GPU working set. Estimates are not measured peak usage. "
+    lines += ["", "Runtime estimates include weights, quantization overhead, a context-sized KV cache and a backend-specific engine reserve. "
+              "The requested budget is capped to the selected GPU's limits. Estimates are not measured peak usage. "
               "Each model result records its hardware and backend. Concurrent system load can affect timing.", "",
               "## Tasks", "",
-              "Short tests stock availability; Medium filters and ranks supplier quotes; Long reconciles a shipment dossier with correction notices and a superseding memo. "
-              "Rows contain unique receipts, offers and movements instead of repeated filler. Each reference answer is computed from the same task data supplied to the model.", "",
-              "Every context includes a valid JSON format example with illustrative values. Models must compute their own answer and return evaluated integer results.", "",
+              "Each context reads a Markdown prompt and its JSON expectation file. Generated tasks fit unique records and compute references from the fitted data. "
+              "Static tasks use the literal Markdown and configured expected answer without padding.", "",
               "Length and task difficulty change together. Cross-context timing differences describe different workloads and cannot isolate context length as their cause.", ""]
     if models:
         for prompt in models[0].get("prompts", []):
             lines += [f"- **{prompt['context']}**: {prompt['task_description']} Input tokens: {prompt['input_tokens']}; "
-                      f"records: {prompt['record_count']}; reference: `{json.dumps(prompt['expected'], ensure_ascii=False)}`."]
+                      f"records: {prompt['record_count']}; reference: `{json.dumps(prompt['expected'], ensure_ascii=False)}`; "
+                      f"comparison: `{json.dumps(prompt.get('comparison', {}), ensure_ascii=False)}`."]
     lines += ["", "## Average results", "",
               "| Tier | Precision | Context | Status | Completed | Tokens in / mean out | Saved weights GiB | Mean seconds ± SD | Mean TTFT ms ± SD | TTFT measured / completed | Mean output tokens/s | JSON valid | Correct fields | Reasoning fields | Exact answer pass |",
               "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
@@ -132,11 +135,11 @@ def suite_report(output_dir, hardware, settings):
               "Truncated answers are retained and graded as returned; they are included in the reported answer pass rates.", "",
               "Thinking is disabled by default for Qwen3. Models use the same task builders and context budgets; exact prompts, token counts and per-model reference answers are saved. "
               "FP32 comparisons stay within each model. A skipped FP32 baseline leaves speedup empty.", "",
-              "Accuracy is strict ground-truth JSON field matching on a distinct synthetic task per context. "
-              "JSON fences are accepted; values and types must match exactly. Full-answer pass requires exactly the requested keys. "
-              "Reasoning fields include each task's numerical calculations and rule-based decisions; names are scored separately in the raw field results. "
+              "Accuracy compares JSON fields with each task's configured reference. JSON fences are accepted; JSON types must match exactly. "
+              "Extra keys and string case follow each task's comparison options. Expected fields must always be present. "
+              "Reasoning fields are selected in the task's expectation file and are also scored separately in the raw field results. "
               "Invalid JSON prevents field scoring. Per-field rates use successful requests; full-answer/JSON rates count all generation attempts. "
-              "Ten greedy repetitions measure timing variability, not ten independent examples or cross-validation. "
+              "Greedy repetitions measure timing variability, not independent examples or cross-validation. "
               "These tasks cannot establish general model quality or a monotonic relationship between model size and correctness.", "",
               ("CUDA FP8 uses per-channel E4M3 weights and INT4 uses symmetric groups of 128; both use weight-only Marlin with BF16 inputs. "
                "Dense weight payloads describe the original source file; loaded parameter bytes are in each runtime audit. "
@@ -215,6 +218,8 @@ def main():
     settings["gpu_uuid"] = hardware.get("gpu_uuid")
     settings["cache_policy"] = bench.CACHE_POLICIES[settings["backend"]]
     settings["prompt_suite"] = bench.PROMPT_SUITE
+    settings["task_suite_sha256"] = bench.task_suite_sha256()
+    settings["scoring_policy"] = bench.SCORING_POLICY
     settings["timing_policy"] = bench.TIMING_POLICY
     settings.update(bench.activation_settings(args.precisions, settings["backend"]))
     manifest = output_dir / "suite_manifest.json"

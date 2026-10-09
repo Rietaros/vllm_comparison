@@ -23,7 +23,8 @@ from difflib import SequenceMatcher
 from collections import Counter
 from pathlib import Path
 
-from prompt_tasks import PROMPT_SUITE, SYSTEM, TASK_BUILDERS
+from prompt_tasks import PROMPT_SUITE, SYSTEM, TASK_BUILDERS, task_suite_sha256
+from answer_comparison import SCORING_POLICY, score_answer
 from benchmark_config import DEFAULT_CONFIG, MODEL_TIERS, load_models
 from benchmark_backend import (resolve_backend, add_backend_arguments, device_memory_budget,
                                hardware_description, CACHE_POLICIES)
@@ -46,7 +47,6 @@ DEFAULT_PRECISIONS = tuple(SPECS)
 SPECS["FP8_A8"] = {**SPECS["FP8"], "weight_format": "FP8",
                    "description": "Fixed MXFP8 weights; MXFP8-rounded projection inputs with BF16 buffers (A8 QDQ)"}
 LEVELS = ("Short", "Medium", "Long")
-EXPECTED = {"project": "ORCHID", "city": "Bandung", "total_units": 42}
 
 
 def write_json(path, data):
@@ -395,58 +395,36 @@ def make_prompts(tokenizer, budgets, enable_thinking=None):
         task, ids = encode(0)
         if len(ids) > budget:
             raise ValueError(f"{level} budget {budget} is below the minimum prompt size {len(ids)}")
-        low, high = 0, 1
-        while len(encode(high)[1]) <= budget:
-            low, high = high, high * 2
-        high -= 1
-        while low < high:
-            middle = (low + high + 1) // 2
-            if len(encode(middle)[1]) <= budget:
-                low = middle
-            else:
-                high = middle - 1
-        task, ids = encode(low)
+        if task["task_mode"] == "generated":
+            low, high = 0, 1
+            while len(encode(high)[1]) <= budget:
+                low, high = high, high * 2
+            high -= 1
+            while low < high:
+                middle = (low + high + 1) // 2
+                if len(encode(middle)[1]) <= budget:
+                    low = middle
+                else:
+                    high = middle - 1
+            task, ids = encode(low)
         digest = hashlib.sha256(json.dumps(ids).encode()).hexdigest()
         prompts.append({**task, "context": level, "prompt_suite": PROMPT_SUITE,
                         "target_tokens": budget, "input_tokens": len(ids),
                         "prompt_token_ids": ids, "prompt_sha256": digest})
-    if len({p["input_tokens"] for p in prompts}) != 3:
+    if all(p["task_mode"] == "generated" for p in prompts) and len({p["input_tokens"] for p in prompts}) != 3:
         raise ValueError("Context budgets must produce three distinct token lengths")
     return prompts
 
 
-def score_answer(text, expected=None, reasoning_fields=None):
-    # The default preserves scoring of the historical ORCHID artifacts.
-    expected = EXPECTED if expected is None else expected
-    text = text.strip()
-    # Accept an otherwise valid JSON object wrapped in a Markdown code fence.
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
-    try:
-        parsed = json.loads(cleaned)
-    except (ValueError, TypeError):
-        parsed = None
-    def exact(value, reference):
-        if type(value) is not type(reference):
-            return False  # In particular, true, "42" and 42.0 are not integer 42.
-        if isinstance(reference, list):
-            return len(value) == len(reference) and all(exact(v, r) for v, r in zip(value, reference))
-        if isinstance(reference, dict):
-            return value.keys() == reference.keys() and all(exact(value[k], r) for k, r in reference.items())
-        return value == reference
-    correct = {}
-    for key, reference in expected.items():
-        value = parsed.get(key) if isinstance(parsed, dict) else None
-        correct[key] = exact(value, reference)
-    schema_valid = isinstance(parsed, dict) and parsed.keys() == expected.keys()
-    reasoning_fields = list(expected) if reasoning_fields is None else reasoning_fields
-    return {"parsed_answer": parsed, "json_valid": isinstance(parsed, dict),
-            "schema_valid": schema_valid, "field_accuracy": sum(correct.values()) / len(expected),
-            "reasoning_accuracy": sum(correct[key] for key in reasoning_fields) / len(reasoning_fields),
-            "all_fields_correct": schema_valid and all(correct.values()), "field_correct": correct}
-
-
 def task_metadata(prompt):
-    return {key: prompt[key] for key in ("prompt_suite", "task_id", "expected", "reasoning_fields") if key in prompt}
+    return {key: prompt[key] for key in ("prompt_suite", "task_id", "task_mode", "expected", "reasoning_fields", "comparison")
+            if key in prompt}
+
+
+def validate_resume_tasks(previous, current):
+    for field in ("prompt_sha256", "expected", "reasoning_fields", "comparison", "task_mode"):
+        if [p.get(field) for p in previous] != [p.get(field) for p in current]:
+            raise ValueError(f"Resume tasks must match the original inputs and scoring: {field}")
 
 
 def blank_rows(precision, prompts, status, error, backend="metal"):
@@ -626,7 +604,8 @@ def run_worker(job):
                            output=completion.text, output_token_ids=list(completion.token_ids),
                            finish_reason=completion.finish_reason)
                 row.update(first_token_timing(generated, elapsed))
-                row.update(score_answer(completion.text, prompt.get("expected"), prompt.get("reasoning_fields")))
+                row.update(score_answer(completion.text, prompt["expected"], prompt.get("reasoning_fields"),
+                                        prompt.get("comparison")))
                 import resource
                 row["driver_peak_rss_bytes"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if platform.system() == "Darwin" else 1024)
                 ttft = f"{row['ttft_s'] * 1000:.1f}ms" if row["ttft_s"] is not None else "unavailable"
@@ -775,7 +754,7 @@ def report(output_dir, hardware, settings, prompts, rows):
                "expected_answers": {p["context"]: p.get("expected") for p in prompts},
                "prompts": prompts, "summary": summaries, "results": rows})
     write_json(output_dir / "summary.json", summaries)
-    columns = ["precision", "backend", "context", "task_id", "trial_id", "status", "input_tokens", "output_tokens", "generation_calls",
+    columns = ["precision", "backend", "context", "task_id", "task_mode", "comparison", "reasoning_fields", "trial_id", "status", "input_tokens", "output_tokens", "generation_calls",
                *MEMORY_METRICS, "engine_rss_high_water_bytes", "memory_before", "memory_after", "experiment_contract",
                "generation_s", "end_to_end_tokens_per_s", "ttft_s", "ttft_source", "ttft_unavailable_reason", "engine_load_s",
                "prepare_s", "weight_payload_bytes", "weight_payload_scope", "runtime_audit", "driver_peak_rss_bytes", "field_accuracy",
@@ -833,18 +812,19 @@ def report(output_dir, hardware, settings, prompts, rows):
     if "FP8_A8" in settings["precisions"]:
         lines += ["", *write_comparison(output_dir, summaries, rows, settings.get("backend", "metal"))]
     lines += ["", "## Tasks and reference answers", "",
-              "Short, Medium and Long are different workloads. Unique receipts, competing quotes and ledger events fill their respective budgets; no repeated filler is added. "
-              "Every task includes a valid JSON format example using illustrative values; the model must calculate its own answer. "
+              "Each context reads its Markdown prompt and JSON expectation file. Generated tasks add complete records to fit their budgets and calculate references from those records. "
+              "Static tasks use the Markdown literally with the configured expected answer; their actual token counts may be below the budgets. "
               "Context length and reasoning difficulty change together, so differences across contexts do not isolate length alone. "
-              "Each precision receives the same token IDs and reference answer at a given context. The answer is calculated from the exact generated task data.", ""]
+              "Each precision receives the same token IDs, reference answer, and comparison rules at a given context.", ""]
     for prompt in prompts:
         lines += [f"- **{prompt['context']}**: {prompt.get('task_description', 'Task not tokenized in this plan')} "
                   f"Records: {prompt.get('record_count', 'pending')}; input tokens: {prompt.get('input_tokens') or 'pending'}. "
-                  f"Reference: `{json.dumps(prompt.get('expected'), ensure_ascii=False)}`."]
+                  f"Reference: `{json.dumps(prompt.get('expected'), ensure_ascii=False)}`. "
+                  f"Comparison: `{json.dumps(prompt.get('comparison', {}), ensure_ascii=False)}`."]
     prompt_link = ("[Read the complete prompts](prompts.md); `prompts.json` also contains task data, token IDs and hashes."
                    if any("prompt" in p for p in prompts) else "Prompts and reference answers are generated when a real run begins.")
     lines += ["", prompt_link, "",
-              "Accuracy checks the task-specific JSON fields and their types. Full-answer pass also requires exactly the requested keys. Text similarity measures agreement with FP32, not correctness.",
+              "Accuracy checks the configured JSON fields and their types. Expected fields must always be present; extra keys and string case follow each task's comparison options. Text similarity measures agreement with FP32, not correctness.",
               "SD is the sample standard deviation across successful requests (undefined for fewer than two). Failed/planned trials never contribute zero timings to the mean.",
               "TTFT (time to first token) measures engine request arrival to the first generated token reaching the engine frontend; "
               "it includes queueing and input prefill, and excludes model setup and subsequent decoding. This local measurement excludes HTTP/network transport. "
@@ -935,6 +915,8 @@ def main():
     if args.hardware:
         print(json.dumps(hardware, indent=2))
         return 0
+    # Validate editable tasks before resolving or downloading any model.
+    preview_tasks = {level: TASK_BUILDERS[level](0) for level in LEVELS}
     output_dir = (args.output_dir or ROOT / "results" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     settings = {"model": args.model, "backend": backend,
@@ -945,7 +927,8 @@ def main():
                 "memory_budget_gib": args.memory_budget_gib,
                 "measured_generations_per_cell": args.repeats, "benchmark_warmup_generations": 0,
                 "seed": 42, "temperature": 0.0, "prefix_caching": False,
-                "prompt_suite": PROMPT_SUITE, "timing_policy": TIMING_POLICY,
+                "prompt_suite": PROMPT_SUITE, "task_suite_sha256": task_suite_sha256(),
+                "scoring_policy": SCORING_POLICY, "timing_policy": TIMING_POLICY,
                 "thinking_policy": args.thinking, "cache_policy": CACHE_POLICIES[backend]}
     settings.update(activation_settings(args.precisions, backend))
     previous = None
@@ -963,8 +946,10 @@ def main():
         raise ValueError("Output directory already contains a run; use a new directory or --resume")
     if args.dry_run:
         prompts = [{"context": level, "input_tokens": None, "target_tokens": budget,
-                    "prompt_suite": PROMPT_SUITE, "task_id": TASK_BUILDERS[level](0)["task_id"],
-                    "task_description": TASK_BUILDERS[level](0)["task_description"]}
+                    "prompt_suite": PROMPT_SUITE, "task_id": preview_tasks[level]["task_id"],
+                    "task_mode": preview_tasks[level]["task_mode"], "comparison": preview_tasks[level]["comparison"],
+                    "reasoning_fields": preview_tasks[level]["reasoning_fields"],
+                    "task_description": preview_tasks[level]["task_description"]}
                    for level, budget in zip(LEVELS, args.context_tokens)]
         rows = [row for precision in args.precisions for row in blank_rows(
             precision, make_trials([{**p, "prompt_sha256": None} for p in prompts], args.repeats), "planned", "Dry run; no compute performed", backend)]
@@ -994,8 +979,8 @@ def main():
     prompts = make_prompts(tokenizer, args.context_tokens, enable_thinking)
     trials = make_trials(prompts, args.repeats)
     settings["trial_schedule"] = [{"trial_id": p["trial_id"], "context": p["context"]} for p in trials]
-    if previous and [p["prompt_sha256"] for p in prompts] != [p["prompt_sha256"] for p in previous["prompts"]]:
-        raise ValueError("Resume prompt hashes must match the original inputs")
+    if previous:
+        validate_resume_tasks(previous["prompts"], prompts)
     write_json(output_dir / "prompts.json", prompts)
     prompt_lines = ["# Complete benchmark prompts", "", "Suite: " + PROMPT_SUITE,
                     "", "System message: " + SYSTEM, ""]
@@ -1003,6 +988,7 @@ def main():
         prompt_lines += ["## " + prompt["context"], "", prompt["task_description"], "",
                          f"Input tokens including chat template: {prompt['input_tokens']}. Unique records: {prompt['record_count']}.",
                          "", "Reference answer: `" + json.dumps(prompt["expected"], ensure_ascii=False) + "`.",
+                         "", "Comparison rules: `" + json.dumps(prompt["comparison"], ensure_ascii=False) + "`.",
                          "", "```text", prompt["prompt"], "```", ""]
     (output_dir / "prompts.md").write_text("\n".join(prompt_lines))
     source_stats = safetensors_info(source)
@@ -1067,13 +1053,17 @@ def main():
                    "timing_policy": TIMING_POLICY,
                    "prompts": pending, "preparation": preparation, "result_path": str(result_path)}
             if "FP8_A8" in args.precisions:
-                job.update(kv_cache_dtype="bfloat16", memory_policy=settings["memory_policy"])
-                job["experiment_contract"] = {"checkpoint": str(checkpoint.resolve()), "source_revision": revision,
-                    "dtype": SPECS[precision]["dtype"], "kv_cache_dtype": job["kv_cache_dtype"],
-                    "kv_cache_bytes": job["kv_cache_bytes"], "cache_block_size": job["cache_block_size"],
-                    "num_gpu_blocks": job["num_gpu_blocks"], "max_model_len": job["max_model_len"],
-                    "max_new_tokens": job["max_new_tokens"], "memory_fraction": job["memory_fraction"],
-                    "memory_policy": settings["memory_policy"], "timing_policy": TIMING_POLICY, "seed": 42, "temperature": 0.0}
+                job.update(memory_policy=settings["memory_policy"])
+                # Only the paired FP8 cases pin BF16 cache storage. Metal's
+                # FP32 engine requires a cache matching its FP32 model dtype.
+                if precision in ACTIVATION_PRECISIONS:
+                    job.update(kv_cache_dtype="bfloat16")
+                    job["experiment_contract"] = {"checkpoint": str(checkpoint.resolve()), "source_revision": revision,
+                        "dtype": SPECS[precision]["dtype"], "kv_cache_dtype": job["kv_cache_dtype"],
+                        "kv_cache_bytes": job["kv_cache_bytes"], "cache_block_size": job["cache_block_size"],
+                        "num_gpu_blocks": job["num_gpu_blocks"], "max_model_len": job["max_model_len"],
+                        "max_new_tokens": job["max_new_tokens"], "memory_fraction": job["memory_fraction"],
+                        "memory_policy": settings["memory_policy"], "timing_policy": TIMING_POLICY, "seed": 42, "temperature": 0.0}
             job_path = output_dir / (precision + "_job.json")
             write_json(job_path, job)
             # Preserve prior failed initialization evidence when resuming.

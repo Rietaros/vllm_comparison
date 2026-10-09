@@ -1,0 +1,13 @@
+{
+  "mode": "generated",
+  "task_id": "stock-availability",
+  "description": "Single-item stock arithmetic and a fulfillment decision.",
+  "expected": {
+    "item": {"$ref": "item"},
+    "available_units": {"$ref": "available_units"},
+    "fulfillable": {"$ref": "fulfillable"}
+  },
+  "reasoning_fields": ["available_units", "fulfillable"],
+  "output_example": {"item": "PENCIL", "available_units": 5, "fulfillable": false},
+  "comparison": {"allow_extra_fields": false, "case_sensitive": true}
+}
