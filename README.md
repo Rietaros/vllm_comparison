@@ -78,6 +78,42 @@ For vLLM-Metal 0.30, the runner translates the laptop budget into the backend's 
 
 The dry run plans 360 rows without downloading or computing. Resume preserves attempted measurements and validates the model list, settings, package versions and source revisions. Select a new directory to run a fresh experiment.
 
+## Compare BF16 and FP8-rounded activations with fixed FP8 weights
+
+Use `--activation-comparison` on either runner:
+
+```sh
+# One configured model: 2 activation cases × 3 contexts × 10 repeats = 60 requests.
+.venv/bin/python compare_vllm.py --tier lightweight --activation-comparison --repeats 10 --output-dir results/activation-lightweight
+
+# All three tiers: 180 requested generations, subject to hardware planning.
+.venv/bin/python compare_models.py --activation-comparison --repeats 10 --output-dir results/activation-models
+
+# Validate the plan without model downloads or inference.
+.venv/bin/python compare_models.py --activation-comparison --dry-run --output-dir results/activation-plan
+```
+
+| Case | Fixed weights | Projection inputs | Other activations and KV cache |
+|---|---|---|---|
+| `FP8` | MXFP8, groups of 32 | BF16 | BF16 |
+| `FP8_A8` | The exact same checkpoint and packed tensors | Rounded to MXFP8 using `mx.qqmm` | BF16 buffers |
+
+The implementation is in [activation_experiment.py](activation_experiment.py), validated with MLX 0.32.1 on an M1 Pro. `FP8_A8` is a **quantize/dequantize experiment**: projection inputs are rounded to FP8, then processed using BF16 buffers. It measures the accuracy effect and execution overhead; it does not claim native FP8 arithmetic or persistent FP8 activation storage. Rounding covers quantized linear projections and a tied embedding output projection. Token embedding lookups, attention operations, normalization, nonlinearities and the KV cache retain their existing behavior. Unsupported quantized module types fail explicitly.
+
+Both cases resolve to the same cached `FP8` checkpoint without converting a second copy. Each runs in a separate engine process with identical prompt token IDs and reference answers, BF16 KV dtype, cache block size/count, input/output limits, seed, decoding settings and rotating context schedule. Requested cache/settings and checkpoint identity are saved per trial. Reports reject mismatched paired attempts; successful-pair counts accompany the results. Speedup is omitted when the successful trial IDs differ. Sequential engine execution still permits system-load drift; first-request compilation work is included in latency.
+
+The experiment retains standard accuracy, TTFT and total-latency measurements, and adds **engine-process memory** outside the timed request:
+
+- MLX active allocation before/after each request, allocator cache after it, and active allocation peak reset before each request.
+- Extra MLX peak above the pre-request active allocation.
+- Engine RSS after the request and its cumulative process RSS high-water mark.
+
+MLX counters cover allocations tracked by MLX; RSS is a resident-memory snapshot rather than a sampled request peak. These measurements overlap and must not be added. The implementation does not assume FP8 rounding reduces activation memory. Missing metrics remain unavailable, with coverage counts and reasons in the raw snapshots.
+
+Each experiment writes `activation_comparison.md`, `activation_comparison.json`, and `activation_comparison.csv` alongside the existing reports. They compare latency, TTFT, field/reasoning accuracy, full-answer pass, memory and coverage per model/context. JSON/CSV also retain sample deviations, maximum MLX peaks, successful-pair counts and latency ratios. Standard raw trial and summary files include the new memory fields. The suite produces the comparison both at its root and inside each model folder.
+
+`--activation-comparison` is opt-in and mutually exclusive with `--precisions`; the standard four-format defaults remain available. For an explicit case list, `--precisions FP8 FP8_A8` selects the same experiment. Use a fresh output directory: resume also validates the activation and memory measurement policies.
+
 ## Run
 
 The official prebuilt Metal wheels need native **arm64 Python 3.12** and **macOS 15+**. The installer uses the official paired vLLM/Metal wheels and creates Python 3.12 inside this project. Start it with an existing Python that supports `venv`, for example the laptop's Homebrew Python 3.13:
@@ -206,7 +242,7 @@ Run the benchmark's correctness checks without model downloads or model inferenc
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-The 32 tests check configuration loading and tier selection, CLI overrides and errors, Markdown prompt loading and invalid templates, valid illustrative JSON examples on every task, absolute 10 GiB planning and CLI selection, distinct tasks without repeated lines, independent calculations from rendered records, last-notice-wins corrections, task-specific schemas and boolean/numeric types, worker scoring against each prompt's reference, context consistency, checkpoint dtype validation, per-trial FP32 comparisons, ten requests per context, rotating schedules, correct means/sample deviation, failed-trial accounting, duplicate rejection, resume behavior, hardware planning, streaming conversion equivalence, skipped metrics, and model identity in suite aggregation. TTFT checks cover V1 latency extraction without mixing clock domains, legacy same-clock timestamps, missing/invalid metrics, measured coverage, milliseconds formatting, and statistics enabled in the worker.
+The 39 tests check activation rounding against explicit quantize/dequantize calculations, packed-weight and checkpoint reuse, tied output projection behavior, unchanged embedding lookups, identical cache plans, engine memory sampling, invalid comparison contracts and unavailable metrics, plus configuration loading and tier selection, CLI overrides and errors, Markdown prompt loading and invalid templates, valid illustrative JSON examples on every task, absolute 10 GiB planning and CLI selection, distinct tasks without repeated lines, independent calculations from rendered records, last-notice-wins corrections, task-specific schemas and boolean/numeric types, worker scoring against each prompt's reference, context consistency, checkpoint dtype validation, per-trial FP32 comparisons, ten requests per context, rotating schedules, correct means/sample deviation, failed-trial accounting, duplicate rejection, resume behavior, hardware planning, streaming conversion equivalence, skipped metrics, and model identity in suite aggregation. TTFT checks cover V1 latency extraction without mixing clock domains, legacy same-clock timestamps, missing/invalid metrics, measured coverage, milliseconds formatting, and statistics enabled in the worker.
 
 ## Time to first token results (10 GiB)
 

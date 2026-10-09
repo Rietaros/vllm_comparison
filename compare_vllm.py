@@ -25,6 +25,8 @@ from pathlib import Path
 
 from prompt_tasks import PROMPT_SUITE, SYSTEM, TASK_BUILDERS
 from benchmark_config import DEFAULT_CONFIG, MODEL_TIERS, load_models
+from activation_experiment import (ACTIVATION_PRECISIONS, ACTIVATION_POLICY, MEMORY_POLICY, MEMORY_METRICS,
+    round_fp8_activations, sample_memory, memory_fields, write_comparison)
 
 ROOT = Path(__file__).resolve().parent
 MIB = 1024 ** 2
@@ -38,6 +40,9 @@ SPECS = {
     "INT4": {"bits": 4, "dtype": "bfloat16", "mode": "affine", "group_size": 64,
              "description": "Affine INT4 weights with group scales/biases; BF16 activations (W4A16)"},
 }
+DEFAULT_PRECISIONS = tuple(SPECS)
+SPECS["FP8_A8"] = {**SPECS["FP8"], "weight_format": "FP8",
+                   "description": "Fixed MXFP8 weights; MXFP8-rounded projection inputs with BF16 buffers (A8 QDQ)"}
 LEVELS = ("Short", "Medium", "Long")
 EXPECTED = {"project": "ORCHID", "city": "Bandung", "total_units": 42}
 
@@ -132,6 +137,18 @@ def validate_memory_arguments(args, parser):
         parser.error("--memory-budget-gib must be finite and positive")
     if args.memory_fraction is not None and not 0 < args.memory_fraction <= .7:
         parser.error("--memory-fraction must be > 0 and <= 0.7")
+
+
+def add_precision_arguments(parser):
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--precisions", nargs="+", choices=list(SPECS), default=list(DEFAULT_PRECISIONS))
+    group.add_argument("--activation-comparison", action="store_true",
+                       help="Compare fixed FP8 weights with BF16 vs FP8-rounded activations and engine memory")
+
+
+def activation_settings(precisions):
+    return ({"activation_policy": ACTIVATION_POLICY, "memory_policy": MEMORY_POLICY,
+             "activation_baseline": "FP8", "kv_cache_dtype": "bfloat16"} if "FP8_A8" in precisions else {})
 
 
 def memory_plan(config, parameter_count, precision, max_model_len, hardware, fraction=None, budget_gib=None):
@@ -297,6 +314,8 @@ def resolve_source(model, revision):
 
 
 def prepare_checkpoint(source, source_revision, model, precision, model_dir):
+    # Activation rounding must reuse the baseline's bytes and conversion identity.
+    precision = SPECS[precision].get("weight_format", precision)
     from mlx_lm.convert import convert
     spec = SPECS[precision]
     config = json.loads((source / "config.json").read_text())
@@ -481,9 +500,10 @@ def audit_loaded_model(model):
     quantized = []
     for name, module in model.named_modules():
         if getattr(module, "bits", None) is not None and getattr(module, "mode", None) is not None:
-            quantized.append({"name": name, "bits": module.bits, "mode": module.mode})
+            quantized.append({"name": name, "bits": module.bits, "mode": module.mode,
+                              "activation_quantization": getattr(module, "activation_quantization", None)})
     return {"loaded_elements_by_dtype": histogram, "loaded_weight_bytes": weight_bytes,
-            "quantized_modules": quantized,
+            "quantized_modules": quantized, "engine_pid": os.getpid(),
             "audit_scope": "Visible MLX module parameters; backend wrapper/compiled state may be outside this tree"}
 
 
@@ -496,16 +516,20 @@ def run_worker(job):
     if current_platform.__class__.__module__.split(".")[0] != "vllm_metal":
         raise RuntimeError("Expected the Metal plugin, but vLLM selected " + str(type(current_platform)))
     spec = SPECS[job["precision"]]
+    measure_memory = job.get("memory_policy") == MEMORY_POLICY
     started = time.perf_counter()
     llm = LLM(model=job["checkpoint"], tokenizer=job["source"], dtype=spec["dtype"],
               max_model_len=job["max_model_len"], max_num_seqs=1,
               max_num_batched_tokens=512, gpu_memory_utilization=job["memory_fraction"],
               kv_cache_memory_bytes=job.get("kv_cache_bytes", 256 * MIB), enable_prefix_caching=False,
+              **({"kv_cache_dtype": job["kv_cache_dtype"]} if "kv_cache_dtype" in job else {}),
               **({"block_size": job["cache_block_size"], "num_gpu_blocks_override": job["num_gpu_blocks"]}
                  if "num_gpu_blocks" in job else {}),
               enforce_eager=True, seed=42, trust_remote_code=False,
               distributed_executor_backend="uni", disable_log_stats=False)
     engine_load_s = time.perf_counter() - started
+    if job["precision"] == "FP8_A8":
+        llm.apply_model(round_fp8_activations)
     audits = llm.apply_model(audit_loaded_model)
     if len(audits) != 1:
         raise RuntimeError("Expected exactly one engine worker")
@@ -514,6 +538,11 @@ def run_worker(job):
         if not audit["quantized_modules"] or any(m["bits"] != spec["bits"] or m["mode"] != spec["mode"]
                                                   for m in audit["quantized_modules"]):
             raise RuntimeError("Loaded quantization does not match the requested precision")
+        rounded = [m.get("activation_quantization") == ACTIVATION_POLICY for m in audit["quantized_modules"]]
+        if job["precision"] == "FP8_A8" and not all(rounded):
+            raise RuntimeError("Loaded projections did not enable FP8 activation rounding")
+        if job["precision"] == "FP8" and any(rounded):
+            raise RuntimeError("BF16 activation baseline unexpectedly contains FP8 rounding")
     elif audit["loaded_elements_by_dtype"].get(spec["dtype"], 0) == 0 or audit["quantized_modules"]:
         raise RuntimeError("Loaded model does not match requested dense precision")
     params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=job["max_new_tokens"], seed=42)
@@ -526,11 +555,15 @@ def run_worker(job):
                    "description": spec["description"], "input_tokens": prompt["input_tokens"],
                    "prompt_sha256": prompt["prompt_sha256"], "generation_calls": 0,
                    "engine_load_s": engine_load_s, "runtime_audit": audit,
+                   **({"experiment_contract": job["experiment_contract"]} if "experiment_contract" in job else {}),
                    "ttft_s": None, "ttft_source": None,
                    "ttft_unavailable_reason": "No completed generation", **job["preparation"]}
             rows.append(row)
+            before_memory = {}
             try:
                 mx.synchronize()
+                if measure_memory:
+                    before_memory = sample_memory(llm, audit, before=True)
                 # Persist the attempt before generation so interrupted trials
                 # cannot be silently repeated on resume. File I/O is not timed.
                 row["generation_calls"] = 1
@@ -556,6 +589,8 @@ def run_worker(job):
                       f"TTFT {ttft}, {count} output tokens", flush=True)
             except Exception as error:
                 row.update(status="error", error=str(error), generation_s=None, output=None)
+            if measure_memory:
+                row.update(memory_fields(before_memory, sample_memory(llm, audit)))
             write_json(job["result_path"], rows)  # Preserve previous cells if a later one fails.
     finally:
         shutdown = getattr(llm.llm_engine.engine_core, "shutdown", None)
@@ -620,9 +655,11 @@ def summarize_rows(rows, precisions, repeats):
                     "weight_payload_bytes": next((r["weight_payload_bytes"] for r in trials if "weight_payload_bytes" in r), None)}
             item["task_id"] = next((r.get("task_id") for r in trials), None)
             item["expected"] = next((r["expected"] for r in trials if "expected" in r), None)
-            for name in ("generation_s", "end_to_end_tokens_per_s", "ttft_s", "output_tokens", "field_accuracy", "reasoning_accuracy", "text_similarity_fp32"):
+            for name in ("generation_s", "end_to_end_tokens_per_s", "ttft_s", "output_tokens", "field_accuracy", "reasoning_accuracy", "text_similarity_fp32", *MEMORY_METRICS):
                 for statistic, value in metric_stats([r.get(name) for r in successful]).items():
                     item[name + "_" + statistic] = value
+            for name in MEMORY_METRICS:
+                item[name + "_measured_trials"] = sum(r.get(name) is not None for r in successful)
             item["ttft_measured_trials"] = sum(r.get("ttft_s") is not None for r in successful)
             item["ttft_missing_trials"] = n - item["ttft_measured_trials"]
             passed = sum(bool(r.get("all_fields_correct")) for r in successful)
@@ -694,6 +731,7 @@ def report(output_dir, hardware, settings, prompts, rows):
                "prompts": prompts, "summary": summaries, "results": rows})
     write_json(output_dir / "summary.json", summaries)
     columns = ["precision", "context", "task_id", "trial_id", "status", "input_tokens", "output_tokens", "generation_calls",
+               *MEMORY_METRICS, "engine_rss_high_water_bytes", "memory_before", "memory_after", "experiment_contract",
                "generation_s", "end_to_end_tokens_per_s", "ttft_s", "ttft_source", "ttft_unavailable_reason", "engine_load_s",
                "prepare_s", "weight_payload_bytes", "driver_peak_rss_bytes", "field_accuracy",
                "all_fields_correct", "reasoning_accuracy", "expected", "parsed_answer", "field_correct", "schema_valid",
@@ -741,6 +779,8 @@ def report(output_dir, hardware, settings, prompts, rows):
     if warnings:
         lines += ["", "Observed runtime limitation: the installed vLLM/Metal stack logged a segmentation fault during engine shutdown for "
                   + ", ".join(warnings) + ". Completed generation results were saved before shutdown. See the corresponding engine logs; a clean teardown is not verified."]
+    if "FP8_A8" in settings["precisions"]:
+        lines += ["", *write_comparison(output_dir, summaries, rows)]
     lines += ["", "## Tasks and reference answers", "",
               "Short, Medium and Long are different workloads. Unique receipts, competing quotes and ledger events fill their respective budgets; no repeated filler is added. "
               "Every task includes a valid JSON format example using illustrative values; the model must calculate its own answer. "
@@ -790,7 +830,7 @@ def parse_args(argv=None):
     selection.add_argument("--model", help="Explicit model ID or local directory; overrides config")
     selection.add_argument("--tier", choices=MODEL_TIERS, default="lightweight", help="Model tier from config (default: lightweight)")
     parser.add_argument("--revision", help="Optional Hugging Face commit/tag; resolved commit is recorded")
-    parser.add_argument("--precisions", nargs="+", choices=list(SPECS), default=list(SPECS))
+    add_precision_arguments(parser)
     parser.add_argument("--context-tokens", type=int, nargs=3, default=[256, 1024, 4096], metavar=("SHORT", "MEDIUM", "LONG"))
     parser.add_argument("--max-new-tokens", type=int, default=96)
     parser.add_argument("--repeats", type=int, default=10, help="Measured generations per precision/context (default: 10)")
@@ -805,6 +845,8 @@ def parse_args(argv=None):
     parser.add_argument("--resume", action="store_true", help="Run only unattempted trials in an existing --output-dir")
     parser.add_argument("--worker-job", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.activation_comparison:
+        args.precisions = list(ACTIVATION_PRECISIONS)
     if args.model is None:
         try:
             args.model = load_models(args.config)[MODEL_TIERS.index(args.tier)]
@@ -849,6 +891,7 @@ def main():
                 "seed": 42, "temperature": 0.0, "prefix_caching": False,
                 "prompt_suite": PROMPT_SUITE, "timing_policy": TIMING_POLICY,
                 "thinking_policy": args.thinking, "cache_policy": "physical-budget-to-metal-with-block-override-v1"}
+    settings.update(activation_settings(args.precisions))
     previous = None
     if args.resume:
         previous = json.loads((output_dir / "results.json").read_text())
@@ -949,6 +992,14 @@ def main():
                    "cache_block_size": plan["cache_block_size"], "num_gpu_blocks": plan["num_gpu_blocks"],
                    "timing_policy": TIMING_POLICY,
                    "prompts": pending, "preparation": preparation, "result_path": str(result_path)}
+            if "FP8_A8" in args.precisions:
+                job.update(kv_cache_dtype="bfloat16", memory_policy=MEMORY_POLICY)
+                job["experiment_contract"] = {"checkpoint": str(checkpoint.resolve()), "source_revision": revision,
+                    "dtype": SPECS[precision]["dtype"], "kv_cache_dtype": job["kv_cache_dtype"],
+                    "kv_cache_bytes": job["kv_cache_bytes"], "cache_block_size": job["cache_block_size"],
+                    "num_gpu_blocks": job["num_gpu_blocks"], "max_model_len": job["max_model_len"],
+                    "max_new_tokens": job["max_new_tokens"], "memory_fraction": job["memory_fraction"],
+                    "memory_policy": MEMORY_POLICY, "timing_policy": TIMING_POLICY, "seed": 42, "temperature": 0.0}
             job_path = output_dir / (precision + "_job.json")
             write_json(job_path, job)
             # Preserve prior failed initialization evidence when resuming.

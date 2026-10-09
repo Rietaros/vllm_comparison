@@ -22,7 +22,7 @@ def collect_results(output_dir, settings):
         metadata = {"tier": tier, "model": model}
         if not path.exists():
             summaries.extend({**metadata, **item} for item in bench.summarize_rows(
-                [], settings.get("precisions", list(bench.SPECS)), settings.get("repeats", 10)))
+                [], settings.get("precisions", list(bench.DEFAULT_PRECISIONS)), settings.get("repeats", 10)))
             continue
         data = json.loads(path.read_text())
         if data["settings"]["model"] != model:
@@ -143,6 +143,9 @@ def suite_report(output_dir, hardware, settings):
               "FP32 is cast from the same BF16 source checkpoint; it cannot recover training precision. "
               "Unsupported or oversized cases have no fabricated timing or accuracy.", "",
               "## Outputs and evidence", ""]
+    if "FP8_A8" in settings["precisions"]:
+        index = lines.index("## Outputs and evidence")
+        lines[index:index] = bench.write_comparison(output_dir, summaries, trials)
     for item in models:
         prompt_link = (f"[complete prompts]({item['tier'].lower()}/prompts.md), "
                        if any(p.get("input_tokens") for p in item.get("prompts", [])) else "")
@@ -166,7 +169,7 @@ def parse_args(argv=None):
                         help="Override the lightweight, medium and complex models from config")
     parser.add_argument("--model-order", nargs=3, choices=TIERS, default=list(TIERS),
                         help="Engine execution order; report rows keep the canonical tier order")
-    parser.add_argument("--precisions", nargs="+", choices=list(bench.SPECS), default=list(bench.SPECS))
+    bench.add_precision_arguments(parser)
     parser.add_argument("--context-tokens", nargs=3, type=int, default=[256, 1024, 4096])
     parser.add_argument("--repeats", type=int, default=10)
     parser.add_argument("--max-new-tokens", type=int, default=96)
@@ -177,6 +180,8 @@ def parse_args(argv=None):
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
+    if args.activation_comparison:
+        args.precisions = list(bench.ACTIVATION_PRECISIONS)
     if args.models is None:
         try:
             args.models = load_models(args.config)
@@ -205,6 +210,7 @@ def main():
     settings["cache_policy"] = "physical-budget-to-metal-with-block-override-v1"
     settings["prompt_suite"] = bench.PROMPT_SUITE
     settings["timing_policy"] = bench.TIMING_POLICY
+    settings.update(bench.activation_settings(args.precisions))
     manifest = output_dir / "suite_manifest.json"
     if args.resume:
         previous = json.loads(manifest.read_text())
