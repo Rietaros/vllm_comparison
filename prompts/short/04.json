@@ -1,15 +1,16 @@
 {
   "mode": "static",
   "task_id": "short-04",
-  "description": "Short case 04: printer decision.",
+  "description": "Garden planting area: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Garden planting area",
   "expected": {
-    "item": "PRINTER",
-    "available_units": 129,
-    "fulfillable": false
+    "garden_area": 84,
+    "planted_area": 78
   },
   "reasoning_fields": [
-    "available_units",
-    "fulfillable"
+    "garden_area",
+    "planted_area"
   ],
   "comparison": {
     "allow_extra_fields": false,

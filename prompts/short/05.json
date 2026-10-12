@@ -1,15 +1,16 @@
 {
   "mode": "static",
   "task_id": "short-05",
-  "description": "Short case 05: tablet decision.",
+  "description": "Quiz points: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Quiz points",
   "expected": {
-    "item": "TABLET",
-    "available_units": 156,
-    "fulfillable": true
+    "score": 44,
+    "passed": true
   },
   "reasoning_fields": [
-    "available_units",
-    "fulfillable"
+    "score",
+    "passed"
   ],
   "comparison": {
     "allow_extra_fields": false,

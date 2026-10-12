@@ -1,15 +1,16 @@
 {
   "mode": "static",
   "task_id": "short-09",
-  "description": "Short case 09: speaker decision.",
+  "description": "Suspicious login email: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Suspicious login email",
   "expected": {
-    "item": "SPEAKER",
-    "available_units": 188,
-    "fulfillable": true
+    "channel": "bookmarked security portal",
+    "share_code": false
   },
   "reasoning_fields": [
-    "available_units",
-    "fulfillable"
+    "channel",
+    "share_code"
   ],
   "comparison": {
     "allow_extra_fields": false,

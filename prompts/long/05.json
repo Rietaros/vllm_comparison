@@ -1,17 +1,22 @@
 {
   "mode": "static",
   "task_id": "long-05",
-  "description": "Long case 05: tablet decision.",
+  "description": "Scholarship award allocation: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Scholarship award allocation",
   "expected": {
-    "destination": "Surabaya",
-    "available_units": 427,
-    "shortfall_units": 518,
-    "action": "REORDER"
+    "awardees": [
+      "Bela",
+      "Citra",
+      "Damar"
+    ],
+    "bela_score": 90,
+    "remaining_budget": 0
   },
   "reasoning_fields": [
-    "available_units",
-    "shortfall_units",
-    "action"
+    "awardees",
+    "bela_score",
+    "remaining_budget"
   ],
   "comparison": {
     "allow_extra_fields": false,

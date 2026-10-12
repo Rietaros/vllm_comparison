@@ -1,15 +1,16 @@
 {
   "mode": "static",
   "task_id": "short-07",
-  "description": "Short case 07: webcam decision.",
+  "description": "Library visitor access: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Library visitor access",
   "expected": {
-    "item": "WEBCAM",
-    "available_units": 172,
-    "fulfillable": true
+    "room": "reference room",
+    "may_borrow": false
   },
   "reasoning_fields": [
-    "available_units",
-    "fulfillable"
+    "room",
+    "may_borrow"
   ],
   "comparison": {
     "allow_extra_fields": false,

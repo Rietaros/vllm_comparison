@@ -1,15 +1,16 @@
 {
   "mode": "static",
   "task_id": "short-02",
-  "description": "Short case 02: keyboard decision.",
+  "description": "Cafe bill: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Cafe bill",
   "expected": {
-    "item": "KEYBOARD",
-    "available_units": 113,
-    "fulfillable": false
+    "subtotal": 68,
+    "total": 60
   },
   "reasoning_fields": [
-    "available_units",
-    "fulfillable"
+    "subtotal",
+    "total"
   ],
   "comparison": {
     "allow_extra_fields": false,

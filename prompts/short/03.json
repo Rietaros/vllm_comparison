@@ -1,15 +1,16 @@
 {
   "mode": "static",
   "task_id": "short-03",
-  "description": "Short case 03: router decision.",
+  "description": "Train travel time: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Train travel time",
   "expected": {
-    "item": "ROUTER",
-    "available_units": 140,
-    "fulfillable": true
+    "travel_minutes": 180,
+    "arrival": "11:15"
   },
   "reasoning_fields": [
-    "available_units",
-    "fulfillable"
+    "travel_minutes",
+    "arrival"
   ],
   "comparison": {
     "allow_extra_fields": false,

@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "long-02",
-  "description": "Long case 02: keyboard decision.",
+  "description": "Time-of-use energy bill: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Time-of-use energy bill",
   "expected": {
-    "destination": "Surabaya",
-    "available_units": 227,
-    "shortfall_units": 0,
-    "action": "RELEASE"
+    "peak_kwh": 79,
+    "off_peak_kwh": 92,
+    "invoice": 510
   },
   "reasoning_fields": [
-    "available_units",
-    "shortfall_units",
-    "action"
+    "peak_kwh",
+    "off_peak_kwh",
+    "invoice"
   ],
   "comparison": {
     "allow_extra_fields": false,

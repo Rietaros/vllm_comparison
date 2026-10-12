@@ -1,17 +1,20 @@
 {
   "mode": "static",
   "task_id": "long-09",
-  "description": "Long case 09: speaker decision.",
+  "description": "Community moderation appeal: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Community moderation appeal",
   "expected": {
-    "destination": "Semarang",
-    "available_units": 450,
-    "shortfall_units": 531,
-    "action": "REORDER"
+    "action": "reinstate",
+    "owner": "Appeals Desk",
+    "evidence": "signed transcript",
+    "authored_abuse": false
   },
   "reasoning_fields": [
-    "available_units",
-    "shortfall_units",
-    "action"
+    "action",
+    "owner",
+    "evidence",
+    "authored_abuse"
   ],
   "comparison": {
     "allow_extra_fields": false,

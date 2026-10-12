@@ -27,44 +27,23 @@ class PromptBankTests(unittest.TestCase):
             self.assertEqual([case["trial_id"] for case in cases], list(range(1, 11)))
             self.assertEqual(len({case["prompt"] for case in cases}), 10)
             self.assertEqual(len({json.dumps(case["expected"], sort_keys=True) for case in cases}), 10)
-            self.assertEqual(len({tuple(case["expected"][key] for key in case["reasoning_fields"]) for case in cases}), 10)
+            self.assertEqual(len({json.dumps({key: case["expected"][key] for key in case["reasoning_fields"]}, sort_keys=True) for case in cases}), 10)
+            self.assertEqual(len({case["topic"] for case in cases}), 10)
+            self.assertEqual([case["case_type"] for case in cases], ["math"] * 5 + ["understanding_qna"] * 5)
             self.assertTrue(all(Path(case["prompt_file"]).exists() and Path(case["expected_file"]).exists() for case in cases))
+        self.assertEqual(len({case["topic"] for case in bank["cases"]}), 30)
 
     def test_expected_answers_independently_match_all_rendered_records(self):
+        from diverse_case_oracles import math_answer, QNA_ANSWERS
         for case in load_bank()["cases"]:
-            text = case["prompt"]
-            if case["context"] == "Short":
-                item = re.search(r"Inventory decision for (\w+) at", text).group(1)
-                opening = int(re.search(r"Opening usable stock: (\d+)", text).group(1))
-                reserved = int(re.search(r"Existing reservations: (\d+)", text).group(1))
-                requested = int(re.search(r"New customer request: (\d+)", text).group(1))
-                available = opening + sum(map(int, re.findall(r"Receipt R\d+: (\d+) units", text))) - reserved
-                expected = {"item": item, "available_units": available, "fulfillable": available >= requested}
-            elif case["context"] == "Medium":
-                units = int(re.search(r"buy (\d+)", text).group(1))
-                deadline = int(re.search(r"Delivery deadline: (\d+)", text).group(1))
-                quotes = re.findall(r"(V\d+-\d+): unit price (\d+); shipping (\d+); fixed discount (\d+); delivery (\d+) days; capacity (\d+) units; certified (yes|no)", text)
-                eligible = [(units * int(price) + int(shipping) - int(discount), int(days), name)
-                    for name, price, shipping, discount, days, capacity, certified in quotes
-                    if certified == "yes" and int(capacity) >= units and int(days) <= deadline]
-                cost, days, name = min(eligible)
-                expected = {"vendor": name, "landed_cost": cost, "eligible_vendors": len(eligible), "delivery_days": days}
-            else:
-                site, demand, reserved = re.search(r"Final memo, version 2: destination (\w+); demand (\d+) units; reservations (\d+)", text).groups()
-                opening_line = re.search(r"Opening usable stock: ([^\n]+)", text).group(1)
-                available = int(re.search(site + r"=(\d+)", opening_line).group(1)) - int(reserved)
-                rows = {eid: {"site": location, "operation": operation, "units": int(units), "status": status, "quality": quality}
-                    for eid, location, operation, units, status, quality in re.findall(r"(E\d+) \| day \d+, slot \d+ \| site (\w+) \| (IN|OUT) (\d+) units \| status=(\w+) \| quality=(\w+)", text)}
-                for field, value, eid in re.findall(r"Notice \d+: replace (\w+)=(\w+) on (E\d+)", text):
-                    rows[eid][field] = int(value) if field == "units" else value
-                for row in rows.values():
-                    if row["site"] == site and row["status"] == "posted" and row["quality"] == "usable":
-                        available += row["units"] if row["operation"] == "IN" else -row["units"]
-                shortfall = max(0, int(demand) - available)
-                expected = {"destination": {"BDG": "Bandung", "SBY": "Surabaya", "SMG": "Semarang"}[site],
-                    "available_units": available, "shortfall_units": shortfall, "action": "REORDER" if shortfall else "RELEASE"}
-            self.assertEqual(case["expected"], expected, case["case_id"])
-            self.assertTrue(all(type(case["expected"][key]) is type(value) for key, value in expected.items()))
+            with self.subTest(case=case["case_id"]):
+                expected = (math_answer(case["case_id"], case["prompt"]) if case["case_type"] == "math"
+                            else QNA_ANSWERS[case["case_id"]])
+                self.assertEqual(case["expected"], expected)
+                self.assertTrue(all(type(case["expected"][key]) is type(value) for key, value in expected.items()))
+                if case["case_type"] == "understanding_qna":
+                    passage = case["prompt"].split("Return JSON only")[0]
+                    self.assertTrue(all(value in passage for value in expected.values() if isinstance(value, str)))
 
     def test_trial_round_selects_new_case_without_cloning(self):
         prompts = encode_cases(load_bank(), WordTokenizer(), [512, 2048, 8192])
@@ -167,12 +146,49 @@ class PromptBankTests(unittest.TestCase):
             before = encode_cases(load_bank(manifest), WordTokenizer(), [512, 2048, 8192])
             path = manifest.parent / "short/01.json"
             answer = json.loads(path.read_text())
-            answer["expected"]["fulfillable"] = 1
+            answer["expected"]["fulfillable"] = int(answer["expected"]["fulfillable"])
             path.write_text(json.dumps(answer))
             after = encode_cases(load_bank(manifest), WordTokenizer(), [512, 2048, 8192])
             self.assertNotEqual(before[0]["expectation_sha256"], after[0]["expectation_sha256"])
             with self.assertRaisesRegex(ValueError, "expectation_sha256"):
                 bench.validate_resume_tasks(before, after)
+
+    def test_case_classification_is_validated_and_preserved_in_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = self.copy_bank(directory)
+            path = manifest.parent / "short/01.json"
+            original = json.loads(path.read_text())
+            for updates in ({"case_type": "other"}, {"case_type": []}, {"topic": ""}, {"topic": 1}):
+                path.write_text(json.dumps({**original, **updates}))
+                with self.assertRaises(ValueError):
+                    load_bank(manifest)
+            path.write_text(json.dumps(original))
+            prompts = encode_cases(load_bank(manifest), WordTokenizer(), [256, 1024, 4096])
+            rows = bench.blank_rows("BF16", prompts, "planned", "test")
+            for row, prompt in zip(rows, prompts):
+                self.assertEqual(row["case_type"], prompt["case_type"])
+                self.assertEqual(row["topic"], prompt["topic"])
+            bench.write_prompt_files(Path(directory), prompts, "Test instructions")
+            markdown = (Path(directory) / "prompts.md").read_text()
+            self.assertIn("Case type: math. Topic: Inventory balance.", markdown)
+            self.assertIn("Case type: understanding_qna. Topic: Gift return policy.", markdown)
+            changed = copy.deepcopy(prompts)
+            changed[0]["case_type"] = "understanding_qna"
+            with self.assertRaisesRegex(ValueError, "case_type"):
+                bench.validate_resume_tasks(prompts, changed)
+
+    def test_copy_tool_preserves_diverse_topics_and_user_edits(self):
+        from tools.create_prompt_bank import copy_bank
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.copy_bank(directory).parent
+            edited = source / "medium/06.md"
+            edited.write_text(edited.read_text() + "\nUser's additional context.\n")
+            destination = Path(directory) / "copy"
+            copied = copy_bank(source, destination, WordTokenizer())
+            self.assertEqual(len(copied), 30)
+            self.assertEqual((destination / "medium/06.md").read_bytes(), edited.read_bytes())
+            self.assertEqual(load_bank(source / "cases.json")["cases"][15]["expected"],
+                             load_bank(destination / "cases.json")["cases"][15]["expected"])
 
 
 if __name__ == "__main__":

@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "long-07",
-  "description": "Long case 07: webcam decision.",
+  "description": "Software release approval: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Software release approval",
   "expected": {
-    "destination": "Bandung",
-    "available_units": 450,
-    "shortfall_units": 513,
-    "action": "REORDER"
+    "action": "hold",
+    "review_team": "Application Security",
+    "may_waive": false
   },
   "reasoning_fields": [
-    "available_units",
-    "shortfall_units",
-    "action"
+    "action",
+    "review_team",
+    "may_waive"
   ],
   "comparison": {
     "allow_extra_fields": false,

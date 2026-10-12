@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "long-01",
-  "description": "Long case 01: monitor decision.",
+  "description": "Community project funding: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Community project funding",
   "expected": {
-    "destination": "Bandung",
-    "available_units": 226,
-    "shortfall_units": 683,
-    "action": "REORDER"
+    "unrestricted_balance": 1705,
+    "spendable_balance": 1505,
+    "shortfall": 95
   },
   "reasoning_fields": [
-    "available_units",
-    "shortfall_units",
-    "action"
+    "unrestricted_balance",
+    "spendable_balance",
+    "shortfall"
   ],
   "comparison": {
     "allow_extra_fields": false,

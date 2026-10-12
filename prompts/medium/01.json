@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "medium-01",
-  "description": "Medium case 01: monitor decision.",
+  "description": "Event catering budget: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Event catering budget",
   "expected": {
-    "vendor": "V01-07",
-    "landed_cost": 832,
-    "eligible_vendors": 8,
-    "delivery_days": 1
+    "total_cost": 640,
+    "budget_remaining": 10,
+    "within_budget": true
   },
   "reasoning_fields": [
-    "landed_cost",
-    "eligible_vendors",
-    "delivery_days"
+    "total_cost",
+    "budget_remaining",
+    "within_budget"
   ],
   "comparison": {
     "allow_extra_fields": false,

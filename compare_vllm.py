@@ -418,13 +418,13 @@ def make_prompts(tokenizer, budgets, enable_thinking=None):
 
 
 def task_metadata(prompt):
-    return {key: prompt[key] for key in ("prompt_suite", "task_id", "task_mode", "expected", "reasoning_fields", "comparison",
+    return {key: prompt[key] for key in ("prompt_suite", "task_id", "task_mode", "case_type", "topic", "expected", "reasoning_fields", "comparison",
                                         "case_id", "prompt_file", "expected_file", "prompt_text_sha256", "expectation_sha256")
             if key in prompt}
 
 
 def validate_resume_tasks(previous, current):
-    for field in ("prompt_sha256", "expected", "reasoning_fields", "comparison", "task_mode", "case_id", "trial_id", "expectation_sha256"):
+    for field in ("prompt_sha256", "expected", "reasoning_fields", "comparison", "task_mode", "case_id", "trial_id", "expectation_sha256", "case_type", "topic"):
         if [p.get(field) for p in previous] != [p.get(field) for p in current]:
             raise ValueError(f"Resume tasks must match the original inputs and scoring: {field}")
 
@@ -638,7 +638,7 @@ def compare_rows(rows):
     for row in rows:
         reference = references.get(trial_key(row))
         if reference and row.get("case_id"):
-            for field in ("case_id", "prompt_sha256", "expected", "reasoning_fields", "comparison", "expectation_sha256"):
+            for field in ("case_id", "prompt_sha256", "expected", "reasoning_fields", "comparison", "expectation_sha256", "case_type", "topic"):
                 if row.get(field) != reference.get(field):
                     raise ValueError(f"FP32 comparison case mismatch: {trial_key(row)}: {field}")
         if row["status"] != "ok" or reference is None:
@@ -786,7 +786,7 @@ def report(output_dir, hardware, settings, prompts, rows):
                     for p in prompts if p["context"] == context} for context in LEVELS},
                "prompts": prompts, "summary": summaries, "results": rows})
     write_json(output_dir / "summary.json", summaries)
-    columns = ["precision", "backend", "context", "case_id", "task_id", "task_mode", "prompt_file", "expected_file", "expectation_sha256", "comparison", "reasoning_fields", "trial_id", "status", "input_tokens", "output_tokens", "generation_calls",
+    columns = ["precision", "backend", "context", "case_id", "task_id", "task_mode", "case_type", "topic", "prompt_file", "expected_file", "expectation_sha256", "comparison", "reasoning_fields", "trial_id", "status", "input_tokens", "output_tokens", "generation_calls",
                *MEMORY_METRICS, "engine_rss_high_water_bytes", "memory_before", "memory_after", "experiment_contract",
                "generation_s", "end_to_end_tokens_per_s", "ttft_s", "ttft_source", "ttft_unavailable_reason", "engine_load_s",
                "prepare_s", "weight_payload_bytes", "weight_payload_scope", "runtime_audit", "driver_peak_rss_bytes", "field_accuracy",
@@ -850,6 +850,7 @@ def report(output_dir, hardware, settings, prompts, rows):
               "Each precision receives the same token IDs, reference answer, and comparison rules for a given context and trial ID.", ""]
     for prompt in prompts:
         lines += [f"- **{prompt['context']} / {prompt.get('case_id', 'template')}**: {prompt.get('task_description', 'Task not tokenized in this plan')} "
+                  f"Type: {prompt.get('case_type') or 'unspecified'}; topic: {prompt.get('topic') or 'unspecified'}. "
                   f"Records: {prompt.get('record_count', 'pending')}; input tokens: {prompt.get('input_tokens') or 'pending'}. "
                   f"Reference: `{json.dumps(prompt.get('expected'), ensure_ascii=False)}`. "
                   f"Comparison: `{json.dumps(prompt.get('comparison', {}), ensure_ascii=False)}`."]
@@ -891,6 +892,7 @@ def write_prompt_files(output_dir, prompts, system):
     lines = ["# Complete benchmark prompt cases", "", "Suite: " + BANK_SUITE, "", "System message: " + system, ""]
     for prompt in prompts:
         lines += [f"## {prompt['context']} / {prompt['case_id']} / trial {prompt['trial_id']}", "", prompt["task_description"], "",
+                  f"Case type: {prompt.get('case_type') or 'unspecified'}. Topic: {prompt.get('topic') or 'unspecified'}.", "",
                   f"Input tokens including chat template: {prompt['input_tokens']}. Budget: {prompt['target_tokens']}.", "",
                   "Reference answer: `" + json.dumps(prompt["expected"], ensure_ascii=False) + "`.", "",
                   "Comparison rules: `" + json.dumps(prompt["comparison"], ensure_ascii=False) + "`.", "",

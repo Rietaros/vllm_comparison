@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "medium-02",
-  "description": "Medium case 02: keyboard decision.",
+  "description": "Water meter invoice: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Water meter invoice",
   "expected": {
-    "vendor": "V02-13",
-    "landed_cost": 914,
-    "eligible_vendors": 8,
-    "delivery_days": 1
+    "consumption": 64,
+    "chargeable_volume": 24,
+    "invoice": 84
   },
   "reasoning_fields": [
-    "landed_cost",
-    "eligible_vendors",
-    "delivery_days"
+    "consumption",
+    "chargeable_volume",
+    "invoice"
   ],
   "comparison": {
     "allow_extra_fields": false,

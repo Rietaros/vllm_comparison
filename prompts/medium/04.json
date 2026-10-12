@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "medium-04",
-  "description": "Medium case 04: printer decision.",
+  "description": "Factory batch yield: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Factory batch yield",
   "expected": {
-    "vendor": "V04-04",
-    "landed_cost": 1397,
-    "eligible_vendors": 8,
-    "delivery_days": 1
+    "usable_units": 90,
+    "rejected_units": 15,
+    "shortfall": 5
   },
   "reasoning_fields": [
-    "landed_cost",
-    "eligible_vendors",
-    "delivery_days"
+    "usable_units",
+    "rejected_units",
+    "shortfall"
   ],
   "comparison": {
     "allow_extra_fields": false,

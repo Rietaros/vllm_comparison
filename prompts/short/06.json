@@ -1,15 +1,16 @@
 {
   "mode": "static",
   "task_id": "short-06",
-  "description": "Short case 06: scanner decision.",
+  "description": "Gift return policy: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Gift return policy",
   "expected": {
-    "item": "SCANNER",
-    "available_units": 145,
-    "fulfillable": false
+    "resolution": "replacement",
+    "evidence": "damage_photo"
   },
   "reasoning_fields": [
-    "available_units",
-    "fulfillable"
+    "resolution",
+    "evidence"
   ],
   "comparison": {
     "allow_extra_fields": false,

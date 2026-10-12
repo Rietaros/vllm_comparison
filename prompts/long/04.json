@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "long-04",
-  "description": "Long case 04: printer decision.",
+  "description": "Backup storage capacity: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Backup storage capacity",
   "expected": {
-    "destination": "Bandung",
-    "available_units": 371,
-    "shortfall_units": 0,
-    "action": "RELEASE"
+    "required_mib": 1695,
+    "remaining_mib": 155,
+    "fits": true
   },
   "reasoning_fields": [
-    "available_units",
-    "shortfall_units",
-    "action"
+    "required_mib",
+    "remaining_mib",
+    "fits"
   ],
   "comparison": {
     "allow_extra_fields": false,

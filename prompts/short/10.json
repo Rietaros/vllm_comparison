@@ -1,15 +1,16 @@
 {
   "mode": "static",
   "task_id": "short-10",
-  "description": "Short case 10: projector decision.",
+  "description": "Museum object location: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Museum object location",
   "expected": {
-    "item": "PROJECTOR",
-    "available_units": 196,
-    "fulfillable": false
+    "gallery": "Maritime Gallery",
+    "collection": "Navigation"
   },
   "reasoning_fields": [
-    "available_units",
-    "fulfillable"
+    "gallery",
+    "collection"
   ],
   "comparison": {
     "allow_extra_fields": false,

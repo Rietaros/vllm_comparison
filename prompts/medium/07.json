@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "medium-07",
-  "description": "Medium case 07: webcam decision.",
+  "description": "Accessible venue booking: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Accessible venue booking",
   "expected": {
-    "vendor": "V07-09",
-    "landed_cost": 1559,
-    "eligible_vendors": 8,
-    "delivery_days": 2
+    "room": "Cedar Room",
+    "team": "Facilities",
+    "confirmation": "written confirmation"
   },
   "reasoning_fields": [
-    "landed_cost",
-    "eligible_vendors",
-    "delivery_days"
+    "room",
+    "team",
+    "confirmation"
   ],
   "comparison": {
     "allow_extra_fields": false,

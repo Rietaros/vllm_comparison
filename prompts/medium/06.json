@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "medium-06",
-  "description": "Medium case 06: scanner decision.",
+  "description": "IT incident escalation: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "IT incident escalation",
   "expected": {
-    "vendor": "V06-18",
-    "landed_cost": 1549,
-    "eligible_vendors": 7,
-    "delivery_days": 3
+    "owner": "Mira",
+    "channel": "incident bridge",
+    "first_action": "Preserve application logs"
   },
   "reasoning_fields": [
-    "landed_cost",
-    "eligible_vendors",
-    "delivery_days"
+    "owner",
+    "channel",
+    "first_action"
   ],
   "comparison": {
     "allow_extra_fields": false,

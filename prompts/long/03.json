@@ -1,17 +1,20 @@
 {
   "mode": "static",
   "task_id": "long-03",
-  "description": "Long case 03: router decision.",
+  "description": "Weighted course grade: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Weighted course grade",
   "expected": {
-    "destination": "Semarang",
-    "available_units": 273,
-    "shortfall_units": 654,
-    "action": "REORDER"
+    "project_score": 90,
+    "final_score": 84,
+    "weighted_result": 82,
+    "passed": true
   },
   "reasoning_fields": [
-    "available_units",
-    "shortfall_units",
-    "action"
+    "project_score",
+    "final_score",
+    "weighted_result",
+    "passed"
   ],
   "comparison": {
     "allow_extra_fields": false,

@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "medium-08",
-  "description": "Medium case 08: headset decision.",
+  "description": "Confidential document routing: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Confidential document routing",
   "expected": {
-    "vendor": "V08-02",
-    "landed_cost": 1485,
-    "eligible_vendors": 7,
-    "delivery_days": 2
+    "team": "People Operations",
+    "channel": "secure employee portal",
+    "may_publish": false
   },
   "reasoning_fields": [
-    "landed_cost",
-    "eligible_vendors",
-    "delivery_days"
+    "team",
+    "channel",
+    "may_publish"
   ],
   "comparison": {
     "allow_extra_fields": false,

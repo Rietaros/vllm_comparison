@@ -1,17 +1,20 @@
 {
   "mode": "static",
   "task_id": "long-10",
-  "description": "Long case 10: projector decision.",
+  "description": "Research consent withdrawal: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Research consent withdrawal",
   "expected": {
-    "destination": "Bandung",
-    "available_units": 479,
-    "shortfall_units": 0,
-    "action": "RELEASE"
+    "audio_action": "delete",
+    "continue_collection": false,
+    "retained_record": "consent withdrawal record",
+    "owner": "Ethics Coordinator"
   },
   "reasoning_fields": [
-    "available_units",
-    "shortfall_units",
-    "action"
+    "audio_action",
+    "continue_collection",
+    "retained_record",
+    "owner"
   ],
   "comparison": {
     "allow_extra_fields": false,

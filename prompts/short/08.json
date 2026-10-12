@@ -1,15 +1,16 @@
 {
   "mode": "static",
   "task_id": "short-08",
-  "description": "Short case 08: headset decision.",
+  "description": "Fern care instructions: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Fern care instructions",
   "expected": {
-    "item": "HEADSET",
-    "available_units": 180,
-    "fulfillable": false
+    "location": "shaded corner",
+    "cause": "excess light"
   },
   "reasoning_fields": [
-    "available_units",
-    "fulfillable"
+    "location",
+    "cause"
   ],
   "comparison": {
     "allow_extra_fields": false,

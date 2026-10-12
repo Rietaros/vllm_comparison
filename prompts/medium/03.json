@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "medium-03",
-  "description": "Medium case 03: router decision.",
+  "description": "Courier route selection: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Courier route selection",
   "expected": {
-    "vendor": "V03-19",
-    "landed_cost": 1031,
-    "eligible_vendors": 8,
-    "delivery_days": 1
+    "route": "Canal",
+    "total_cost": 42,
+    "eligible_routes": 2
   },
   "reasoning_fields": [
-    "landed_cost",
-    "eligible_vendors",
-    "delivery_days"
+    "route",
+    "total_cost",
+    "eligible_routes"
   ],
   "comparison": {
     "allow_extra_fields": false,

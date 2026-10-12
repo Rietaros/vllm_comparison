@@ -126,7 +126,7 @@ Edit [config.json](config.json) to change the model saved for each tier. Use unq
 
 `compare_vllm.py --tier medium` selects one tier. `compare_models.py` runs all three, which must have distinct model IDs. NVIDIA support currently targets dense text models such as these Qwen3 models.
 
-The default dataset has **10 different prompts and 10 different expected answers per context**: 30 editable pairs in total. [prompts/cases.json](prompts/cases.json) lists their order; [prompts/system.md](prompts/system.md) supplies shared instructions.
+The default dataset has **10 different topics per context**, with **5 math cases and 5 understanding Q&A cases** in each of Short, Medium, and Long: 30 editable pairs across 30 topics. Math cases require calculations; Q&A cases answer questions from supplied passages without arithmetic. [prompts/README.md](prompts/README.md) lists every topic. [prompts/cases.json](prompts/cases.json) lists their order; [prompts/system.md](prompts/system.md) supplies shared instructions.
 
 | Context | Editable pairs | Default input budget |
 |---|---|---:|
@@ -142,6 +142,8 @@ The default dataset has **10 different prompts and 10 different expected answers
    ```json
    {
      "mode": "static",
+     "case_type": "math",
+     "topic": "Multiplication",
      "expected": {"total": 42},
      "reasoning_fields": ["total"],
      "comparison": {"allow_extra_fields": false, "case_sensitive": true}
@@ -155,11 +157,13 @@ The default dataset has **10 different prompts and 10 different expected answers
      --memory-fraction 0.8 --repeats 10 --output-dir results/custom-prompts
    ```
 
-Trial 1 uses `01`, trial 2 uses `02`, and so on. Every precision receives the same case and expected answer for each trial. `--repeats 1` selects only `01` in each context. Counts above 10 require adding more pairs to the manifest; cases are never recycled.
+Trial 1 uses `01`, trial 2 uses `02`, and so on. Cases `01`–`05` are math, and `06`–`10` are understanding Q&A. Use `--repeats 10` for the balanced 5/5 split; `--repeats 1` selects only the first math case in each context. Every precision receives the same case and expected answer for each trial. Counts above 10 require adding more pairs to the manifest; cases are never recycled.
 
 All files are read from disk. Markdown is used literally, without template substitution or padding, and must fit the selected token budget. The JSON response keys and value types must match `expected`. No Python edits are needed. Use `--prompt-manifest PATH` for another dataset.
 
 `reasoning_fields` selects fields for reasoning accuracy; omit it to score all fields, or use `[]` to leave that metric unavailable. Set `allow_extra_fields` to `true` to accept additional keys, or `case_sensitive` to `false` to ignore string case. Other value types match exactly. Resume rejects changes to prompts, expected answers, case order, or comparison rules.
+
+The paired JSON files also label each case with `case_type` (`math` or `understanding_qna`) and `topic`. These labels appear in saved prompts, comparison reports, and per-trial CSV/JSON results, so results can be filtered by case type. Context averages combine both types.
 
 The earlier single-template files (`short.md`, `normal.md`, and `long.md` directly under `prompts/`) are retained for historical helpers. Current runs use the case folders listed in `cases.json`.
 
@@ -189,7 +193,7 @@ Check completed/requested counts, TTFT coverage, and memory coverage before comp
 
 Markdown tables show TTFT in milliseconds; CSV/JSON TTFT values use seconds. Raw memory fields ending in `_bytes` use bytes.
 
-Accuracy summarizes 30 synthetic cases across three task families. Timing variation includes differences between cases and output lengths; this dataset does not establish general model accuracy. CUDA and Metal use different quantization recipes, so compare precisions within the same backend. Actual NVIDIA timing and memory must be measured on your server.
+Accuracy summarizes 30 synthetic topics across math and understanding Q&A. Timing variation includes differences between cases and output lengths; this dataset does not establish general model accuracy. CUDA and Metal use different quantization recipes, so compare precisions within the same backend. Actual NVIDIA timing and memory must be measured on your server.
 
 ## Useful options
 
@@ -221,4 +225,4 @@ The installer creates a Python 3.12 environment in `.venv`. Use `.venv/bin/pytho
 
 See [benchmark details](docs/benchmark_details.md) for quantization recipes, scoring, timing, memory scopes, and tests. [Previous Apple Silicon results](docs/previous_results.md) are kept separately. Downloaded weights, environments, and generated results are excluded from Git.
 
-The [ten-different-cases comparison](docs/runs/distinct-prompts-10-cases/README.md) includes all returned answers, per-trial CSV, averages, and activation-memory results. It completed **420 generations**, with **30 Complex/FP32 memory skips**, **0 failed cases**, and **90 verified FP8 activation pairs**, on Apple Silicon using local BF16 source copies. Reports retain the observed Metal teardown warnings. The [earlier one-repeat run](docs/runs/modular-prompts-1-run/README.md) is preserved separately.
+The [historical ten-case comparison](docs/runs/distinct-prompts-10-cases/README.md) used the earlier inventory, procurement, and dispatch dataset. It includes all returned answers, per-trial CSV, averages, and activation-memory results, with **420 completed generations**, **30 Complex/FP32 memory skips**, **0 failed cases**, and **90 verified FP8 activation pairs**, on Apple Silicon using local BF16 source copies. Reports retain the observed Metal teardown warnings. The [earlier one-repeat run](docs/runs/modular-prompts-1-run/README.md) is preserved separately.

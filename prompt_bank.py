@@ -9,7 +9,8 @@ from answer_comparison import comparison_options, validate_expected
 
 CONTEXTS = ("Short", "Medium", "Long")
 DEFAULT_MANIFEST = Path(__file__).resolve().parent / "prompts" / "cases.json"
-PROMPT_SUITE = "editable-distinct-cases-v5"
+PROMPT_SUITE = "diverse-math-qna-cases-v6"
+CASE_TYPES = ("math", "understanding_qna")
 
 
 def read_text(path):
@@ -62,17 +63,20 @@ def load_bank(manifest=DEFAULT_MANIFEST, count=10):
                 raise ValueError(f"Duplicate {context} prompt: {prompt_path}")
             seen_text.add(text)
             answer = json.loads(expected_path.read_text(encoding="utf-8"))
-            allowed = {"mode", "task_id", "description", "expected", "reasoning_fields", "comparison"}
+            allowed = {"mode", "task_id", "description", "case_type", "topic", "expected", "reasoning_fields", "comparison"}
             if not isinstance(answer, dict) or set(answer) - allowed or answer.get("mode", "static") != "static":
                 raise ValueError(f"Case expectations must use static mode and literal expected values: {expected_path}")
             reasoning = validate_expected(answer.get("expected"), answer.get("reasoning_fields"))
             options = comparison_options(answer.get("comparison"))
-            for key in ("task_id", "description"):
+            for key in ("task_id", "description", "topic"):
                 if key in answer and (not isinstance(answer[key], str) or not answer[key].strip()):
                     raise ValueError(f"{expected_path}: {key} must be a nonempty string")
+            if "case_type" in answer and answer["case_type"] not in CASE_TYPES:
+                raise ValueError(f"{expected_path}: case_type must be math or understanding_qna")
             if index <= count:
                 cases.append({"context": context, "trial_id": index, "case_id": case_id,
                     "task_id": answer.get("task_id", case_id), "task_description": answer.get("description", case_id),
+                    "case_type": answer.get("case_type"), "topic": answer.get("topic"),
                     "task_mode": "static", "prompt": text, "record_count": 0, "task_data": {},
                     "expected": answer["expected"], "reasoning_fields": reasoning, "comparison": options,
                     "expectation_sha256": hashlib.sha256(json.dumps({"expected": answer["expected"],

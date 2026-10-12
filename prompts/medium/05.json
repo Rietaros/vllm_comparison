@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "medium-05",
-  "description": "Medium case 05: tablet decision.",
+  "description": "Study time planning: calculate the requested results from the supplied data.",
+  "case_type": "math",
+  "topic": "Study time planning",
   "expected": {
-    "vendor": "V05-01",
-    "landed_cost": 1140,
-    "eligible_vendors": 8,
-    "delivery_days": 1
+    "planned_minutes": 240,
+    "additional_minutes": 210,
+    "completed_chapters": 9
   },
   "reasoning_fields": [
-    "landed_cost",
-    "eligible_vendors",
-    "delivery_days"
+    "planned_minutes",
+    "additional_minutes",
+    "completed_chapters"
   ],
   "comparison": {
     "allow_extra_fields": false,

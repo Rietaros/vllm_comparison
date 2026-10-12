@@ -43,7 +43,7 @@ def collect_results(output_dir, settings):
                        "enable_thinking": data["settings"].get("enable_thinking"),
                        "prompts": [{key: prompt.get(key) for key in ("context", "task_id", "task_description",
                                      "input_tokens", "record_count", "prompt_sha256", "expected", "reasoning_fields", "output_example",
-                                     "task_mode", "comparison", "case_id", "trial_id", "prompt_file", "expected_file")}
+                                     "task_mode", "case_type", "topic", "comparison", "case_id", "trial_id", "prompt_file", "expected_file")}
                                    for prompt in data.get("prompts", [])],
                        "report": str(path.parent / "comparison.md"),
                        "hardware": data["hardware"]})
@@ -105,6 +105,7 @@ def suite_report(output_dir, hardware, settings):
     if models:
         for prompt in models[0].get("prompts", []):
             lines += [f"- **{prompt['context']} / {prompt.get('case_id', 'template')}**: {prompt['task_description']} Input tokens: {prompt['input_tokens']}; "
+                      f"type: {prompt.get('case_type') or 'unspecified'}; topic: {prompt.get('topic') or 'unspecified'}; "
                       f"records: {prompt['record_count']}; reference: `{json.dumps(prompt['expected'], ensure_ascii=False)}`; "
                       f"comparison: `{json.dumps(prompt.get('comparison', {}), ensure_ascii=False)}`."]
     lines += ["", "## Average results", "",

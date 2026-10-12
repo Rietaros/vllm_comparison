@@ -1,17 +1,20 @@
 {
   "mode": "static",
   "task_id": "long-08",
-  "description": "Long case 08: headset decision.",
+  "description": "Heritage artifact provenance: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Heritage artifact provenance",
   "expected": {
-    "destination": "Surabaya",
-    "available_units": 426,
-    "shortfall_units": 0,
-    "action": "RELEASE"
+    "maker": "Anika",
+    "workshop": "River Workshop",
+    "owner": "City Archive",
+    "image_use": "educational_only"
   },
   "reasoning_fields": [
-    "available_units",
-    "shortfall_units",
-    "action"
+    "maker",
+    "workshop",
+    "owner",
+    "image_use"
   ],
   "comparison": {
     "allow_extra_fields": false,

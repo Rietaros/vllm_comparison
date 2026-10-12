@@ -1,17 +1,18 @@
 {
   "mode": "static",
   "task_id": "medium-09",
-  "description": "Medium case 09: speaker decision.",
+  "description": "Wildlife briefing comprehension: answer the questions using the supplied passage and rules, without calculation.",
+  "case_type": "understanding_qna",
+  "topic": "Wildlife briefing comprehension",
   "expected": {
-    "vendor": "V09-02",
-    "landed_cost": 2085,
-    "eligible_vendors": 4,
-    "delivery_days": 2
+    "contact": "licensed rescue team",
+    "location": "quiet ventilated box",
+    "feeding_allowed": false
   },
   "reasoning_fields": [
-    "landed_cost",
-    "eligible_vendors",
-    "delivery_days"
+    "contact",
+    "location",
+    "feeding_allowed"
   ],
   "comparison": {
     "allow_extra_fields": false,
