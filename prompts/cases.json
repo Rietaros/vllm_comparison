@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "system": "system.md",
+  "contexts": {
+    "Short": [
+      {
+        "id": "short-01",
+        "prompt": "short/01.md",
+        "expected": "short/01.json"
+      },
+      {
+        "id": "short-02",
+        "prompt": "short/02.md",
+        "expected": "short/02.json"
+      },
+      {
+        "id": "short-03",
+        "prompt": "short/03.md",
+        "expected": "short/03.json"
+      },
+      {
+        "id": "short-04",
+        "prompt": "short/04.md",
+        "expected": "short/04.json"
+      },
+      {
+        "id": "short-05",
+        "prompt": "short/05.md",
+        "expected": "short/05.json"
+      },
+      {
+        "id": "short-06",
+        "prompt": "short/06.md",
+        "expected": "short/06.json"
+      },
+      {
+        "id": "short-07",
+        "prompt": "short/07.md",
+        "expected": "short/07.json"
+      },
+      {
+        "id": "short-08",
+        "prompt": "short/08.md",
+        "expected": "short/08.json"
+      },
+      {
+        "id": "short-09",
+        "prompt": "short/09.md",
+        "expected": "short/09.json"
+      },
+      {
+        "id": "short-10",
+        "prompt": "short/10.md",
+        "expected": "short/10.json"
+      }
+    ],
+    "Medium": [
+      {
+        "id": "medium-01",
+        "prompt": "medium/01.md",
+        "expected": "medium/01.json"
+      },
+      {
+        "id": "medium-02",
+        "prompt": "medium/02.md",
+        "expected": "medium/02.json"
+      },
+      {
+        "id": "medium-03",
+        "prompt": "medium/03.md",
+        "expected": "medium/03.json"
+      },
+      {
+        "id": "medium-04",
+        "prompt": "medium/04.md",
+        "expected": "medium/04.json"
+      },
+      {
+        "id": "medium-05",
+        "prompt": "medium/05.md",
+        "expected": "medium/05.json"
+      },
+      {
+        "id": "medium-06",
+        "prompt": "medium/06.md",
+        "expected": "medium/06.json"
+      },
+      {
+        "id": "medium-07",
+        "prompt": "medium/07.md",
+        "expected": "medium/07.json"
+      },
+      {
+        "id": "medium-08",
+        "prompt": "medium/08.md",
+        "expected": "medium/08.json"
+      },
+      {
+        "id": "medium-09",
+        "prompt": "medium/09.md",
+        "expected": "medium/09.json"
+      },
+      {
+        "id": "medium-10",
+        "prompt": "medium/10.md",
+        "expected": "medium/10.json"
+      }
+    ],
+    "Long": [
+      {
+        "id": "long-01",
+        "prompt": "long/01.md",
+        "expected": "long/01.json"
+      },
+      {
+        "id": "long-02",
+        "prompt": "long/02.md",
+        "expected": "long/02.json"
+      },
+      {
+        "id": "long-03",
+        "prompt": "long/03.md",
+        "expected": "long/03.json"
+      },
+      {
+        "id": "long-04",
+        "prompt": "long/04.md",
+        "expected": "long/04.json"
+      },
+      {
+        "id": "long-05",
+        "prompt": "long/05.md",
+        "expected": "long/05.json"
+      },
+      {
+        "id": "long-06",
+        "prompt": "long/06.md",
+        "expected": "long/06.json"
+      },
+      {
+        "id": "long-07",
+        "prompt": "long/07.md",
+        "expected": "long/07.json"
+      },
+      {
+        "id": "long-08",
+        "prompt": "long/08.md",
+        "expected": "long/08.json"
+      },
+      {
+        "id": "long-09",
+        "prompt": "long/09.md",
+        "expected": "long/09.json"
+      },
+      {
+        "id": "long-10",
+        "prompt": "long/10.md",
+        "expected": "long/10.json"
+      }
+    ]
+  }
+}

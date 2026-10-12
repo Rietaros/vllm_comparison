@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "medium-05",
+  "description": "Medium case 05: tablet decision.",
+  "expected": {
+    "vendor": "V05-01",
+    "landed_cost": 1140,
+    "eligible_vendors": 8,
+    "delivery_days": 1
+  },
+  "reasoning_fields": [
+    "landed_cost",
+    "eligible_vendors",
+    "delivery_days"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

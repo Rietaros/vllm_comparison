@@ -1,0 +1,18 @@
+{
+  "mode": "static",
+  "task_id": "short-02",
+  "description": "Short case 02: keyboard decision.",
+  "expected": {
+    "item": "KEYBOARD",
+    "available_units": 113,
+    "fulfillable": false
+  },
+  "reasoning_fields": [
+    "available_units",
+    "fulfillable"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

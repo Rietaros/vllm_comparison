@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "medium-08",
+  "description": "Medium case 08: headset decision.",
+  "expected": {
+    "vendor": "V08-02",
+    "landed_cost": 1485,
+    "eligible_vendors": 7,
+    "delivery_days": 2
+  },
+  "reasoning_fields": [
+    "landed_cost",
+    "eligible_vendors",
+    "delivery_days"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

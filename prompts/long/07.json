@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "long-07",
+  "description": "Long case 07: webcam decision.",
+  "expected": {
+    "destination": "Bandung",
+    "available_units": 450,
+    "shortfall_units": 513,
+    "action": "REORDER"
+  },
+  "reasoning_fields": [
+    "available_units",
+    "shortfall_units",
+    "action"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

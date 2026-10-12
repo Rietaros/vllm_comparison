@@ -1,0 +1,18 @@
+{
+  "mode": "static",
+  "task_id": "short-06",
+  "description": "Short case 06: scanner decision.",
+  "expected": {
+    "item": "SCANNER",
+    "available_units": 145,
+    "fulfillable": false
+  },
+  "reasoning_fields": [
+    "available_units",
+    "fulfillable"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

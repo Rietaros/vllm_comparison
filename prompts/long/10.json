@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "long-10",
+  "description": "Long case 10: projector decision.",
+  "expected": {
+    "destination": "Bandung",
+    "available_units": 479,
+    "shortfall_units": 0,
+    "action": "RELEASE"
+  },
+  "reasoning_fields": [
+    "available_units",
+    "shortfall_units",
+    "action"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "mode": "static",
+  "task_id": "short-01",
+  "description": "Short case 01: monitor decision.",
+  "expected": {
+    "item": "MONITOR",
+    "available_units": 124,
+    "fulfillable": true
+  },
+  "reasoning_fields": [
+    "available_units",
+    "fulfillable"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

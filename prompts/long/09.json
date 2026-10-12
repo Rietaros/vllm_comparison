@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "long-09",
+  "description": "Long case 09: speaker decision.",
+  "expected": {
+    "destination": "Semarang",
+    "available_units": 450,
+    "shortfall_units": 531,
+    "action": "REORDER"
+  },
+  "reasoning_fields": [
+    "available_units",
+    "shortfall_units",
+    "action"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

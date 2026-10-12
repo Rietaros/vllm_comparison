@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "medium-10",
+  "description": "Medium case 10: projector decision.",
+  "expected": {
+    "vendor": "V10-01",
+    "landed_cost": 1475,
+    "eligible_vendors": 5,
+    "delivery_days": 1
+  },
+  "reasoning_fields": [
+    "landed_cost",
+    "eligible_vendors",
+    "delivery_days"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

@@ -59,35 +59,31 @@ The default source model was published in BF16. Casting it to FP32 allows FP32 e
 
 ## Prompts and comparison
 
-Short, Medium, and Long use input budgets of **256, 1,024, and 4,096 tokens**, including the model's chat template. Suite version `editable-prompts-and-expectations-v4` pairs [prompts/short.md](../prompts/short.md), [prompts/normal.md](../prompts/normal.md), and [prompts/long.md](../prompts/long.md) with their `.json` expectation files. In `generated` mode, [prompt_tasks.py](../prompt_tasks.py) adds complete, unique records until the next record would exceed the budget. Expected values resolve `{"$ref": "field"}` against the calculated reference values after fitting. Literal JSON values are also supported. In `static` mode, the Markdown is used literally, and the JSON file supplies a fixed expected answer; no records, substitution, or padding are added. Actual static prompt sizes must fit the budgets, but need not be distinct.
+Suite version `editable-distinct-cases-v5` reads [prompts/cases.json](../prompts/cases.json): **10 Markdown/JSON pairs for each of Short, Medium, and Long**. [prompt_bank.py](../prompt_bank.py) validates the manifest, case IDs, prompt files, literal expected answers, and scoring rules before model downloads. Trial `i` selects pair `i` in every context. Counts above the available cases fail rather than recycling questions.
 
-Expectation files also configure task descriptions, illustrative output examples, reasoning fields, and comparison options. [answer_comparison.py](../answer_comparison.py) performs the common JSON scoring. The exact prompts, resolved expectations, comparison options, token IDs, and hashes are saved in each run. The suite identity hashes all Markdown and expectation files, including the shared system prompt; resume rejects answer-only or rule-only changes even if token IDs stay the same. Suites reject changed task definitions between models, and activation pairs must share scoring rules and reasoning fields.
+The default dataset has 30 different questions and 30 different expected objects. It varies stock items and deliveries, procurement quantities and offers, and dispatch destinations, ledgers, corrections, and final policies. Every case includes a schema example with illustrative values. Actual JSON answer values are saved in the paired `.json` file and can be edited directly. Markdown is literal; no template substitution, truncation, or repeated filler is added at runtime.
 
-| Context | Task | What the model must do | Input tokens / records in the Qwen3 rerun |
-|---|---|---|---:|
-| Short | Stock availability | Sum accepted receipts, subtract reservations and decide whether a new request can be fulfilled | 256 / 9 receipts |
-| Medium | Supplier selection | Filter 20 offers by certification, capacity and delivery deadline; calculate costs; choose the best eligible offer and count eligible suppliers | 992 / 20 offers |
-| Long | Shipment reconciliation | Read a site directory, stock policy, 77 movements, four correction notices and a superseding memo; calculate available stock, shortfall and action | 4,065 / 77 movements |
+| Context | Task family | Cases | Actual input tokens with configured Qwen3 tokenizers |
+|---|---|---:|---:|
+| Short | Inventory arithmetic and fulfillment | 10 | 250–253 |
+| Medium | Supplier eligibility, costs, and ranking | 10 | 1,015–1,020 |
+| Long | Corrected multi-site ledger and final dispatch policy | 10 | 4,068–4,096 |
 
-Every default generated prompt includes a valid example of its requested JSON schema. The examples are explicitly labeled as illustrative, and models must calculate the actual answer:
+Budgets include the shared system message and model chat template. A changed prompt must fit its budget or the runner fails with the case ID and actual token count. Other tokenizers may produce different lengths; inspect saved prompts before comparing models. All three configured Qwen3 tokenizers were checked to produce identical token IDs and expected answers for every case.
 
-| Context | Example output format |
-|---|---|
-| Short | `{"item": "PENCIL", "available_units": 5, "fulfillable": false}` |
-| Medium | `{"vendor": "EXAMPLE", "landed_cost": 1500, "eligible_vendors": 2, "delivery_days": 3}` |
-| Long | `{"destination": "Example City", "available_units": 50, "shortfall_units": 25, "action": "REORDER"}` |
+The manifest and all referenced Markdown/JSON files are hashed, including the system prompt. Resume rejects changed answers, case order, or rules even when token IDs are unchanged. A separate expectation hash preserves JSON type differences such as boolean `true` versus integer `1`. FP32 and activation comparisons pair the same context, trial ID, case ID, tokens, expected answer, and comparison rules. Activation pairs also retain the fixed checkpoint/cache/settings contract.
 
-Integers must be evaluated numbers, rather than expressions such as `17 + 25`. The examples count toward the input budgets, so this version fits fewer records than the previous prompts. Budget, examples and record counts changed together; comparisons to earlier runs do not isolate the effect of any one change.
+Reports save case IDs and references per trial, without collapsing ten answers into one context reference. Summary CSV/JSON includes every expected answer by trial, distinct case coverage, and input-length means/ranges. Averages and deviations cover different cases and response lengths; they are not estimates of repeated timing for one fixed prompt. Most-common-output frequency is output diversity across cases, and the repeated-output consistency metric is unavailable for distinct-case cells. Mean FP32 speedup is available only when both formats completed the same case IDs.
 
-For generated tasks, the reference answer is computed from the exact records included after tokenizer fitting. For the three Qwen3 models the default token IDs and references were previously verified identical across all tiers. With other tokenizers, fitting may include different numbers of records, so check their saved prompts before drawing comparisons across models. Precision comparisons within a model always use the same input.
+[tools/create_prompt_bank.py](../tools/create_prompt_bank.py) generated the initial static files using deterministic scenarios and tokenizer-aware record fitting. It is an optional regeneration tool and never runs during inference. Editing Markdown and JSON directly remains authoritative. The earlier generated-template helpers in [prompt_tasks.py](../prompt_tasks.py) and the original single-template files are retained for historical tests and artifacts; current CLI runs select the manifest dataset.
 
-The tasks differ in both length and reasoning difficulty. Differences between Short, Medium and Long therefore describe different workloads; they do not isolate the effect of length. Ten repetitions of each fixed task measure timing variability, not general accuracy across a dataset. Historical measurements using the ORCHID/Bandung question and repeated archive sentences are summarized in [previous_results.md](previous_results.md); their generated files are not tracked in Git. Resume rejects a different prompt-suite version or different prompt hashes.
+These 30 synthetic cases cover three task families. They provide case-level accuracy comparisons without establishing general model quality or isolating context length from task difficulty. Historical fixed-prompt measurements are kept in [previous_results.md](previous_results.md) and the earlier run folders.
 
 Greedy decoding (`temperature=0`, seed 42), batch size 1, a common output limit, and disabled prefix caching keep the comparison consistent. Output can stop early at EOS, so the results record output token counts and finish reasons. The default output limit of 96 tokens accommodates all three compact JSON schemas; any truncated answer is retained and graded as returned.
 
 An otherwise valid JSON object inside a Markdown code fence is accepted. JSON types match exactly: a string, float or boolean cannot substitute for an integer, and integer `1` cannot substitute for boolean `true`. By default strings are case-sensitive and full-answer pass requires exactly the expected keys. The task's `comparison` object can set `case_sensitive` to `false` or `allow_extra_fields` to `true` (including nested objects). Required fields must still be present, including fields whose expected value is `null`. Invalid or nonfinite JSON scores false on every field. `reasoning_fields` selects a subset of expected fields; an empty list leaves reasoning accuracy unavailable. Reports separate JSON validity, per-field accuracy, reasoning-field accuracy and full-answer pass rate.
 
-Each precision loads its model once and runs ten rounds. Context order rotates between rounds (`Short → Medium → Long`, then `Medium → Long → Short`, then `Long → Short → Medium`) using the same schedule for every precision. All ten measurements enter the average, including the first request. No extra benchmark warm-up is added; vLLM's engine initialization and internal profiling happen outside the timed requests. Rotation spreads context measurements across the run; it does not eliminate drift between the sequential precision engines.
+Each precision loads its model once and runs ten rounds, selecting the next distinct case in each context. Context order rotates between rounds (`Short → Medium → Long`, then `Medium → Long → Short`, then `Long → Short → Medium`) using the same schedule for every precision. All ten measurements enter the average, including the first request. No extra benchmark warm-up is added; vLLM's engine initialization and internal profiling happen outside the timed requests. Rotation spreads context measurements across the run; it does not eliminate drift between the sequential precision engines.
 
 The result compares:
 
@@ -102,7 +98,7 @@ The result compares:
 
 The engine uses at most one concurrent sequence, a 512-token scheduler prefill budget, and a KV cache estimated from the architecture, cache precision and longest request, with a minimum of 256 MiB. Both commands default to a 10 GiB planning budget; the NVIDIA examples in the README instead select 80% of GPU VRAM. The explicit KV allocation governs cache sizing; the budget is not a hard cap on total process memory. Process RSS is a cumulative driver high-water mark, not complete engine or unified GPU memory. Some first-request kernel work may remain inside the generation time even after engine initialization.
 
-The sample standard deviation is undefined for fewer than two successful requests and is then left empty. Failed/planned/missing requests never become zero timings in an average. Always check the completed/requested count when comparing means. These three fixed tasks are not a general accuracy evaluation or a cross-validation estimate. Errors are retained; a failed run exits nonzero and preserves completed measurements.
+The sample standard deviation is undefined for fewer than two successful requests and is then left empty. Failed/planned/missing requests never become zero timings in an average. Always check the completed/requested count when comparing means. This synthetic 30-case dataset is not a general accuracy evaluation or a cross-validation estimate. Errors are retained; a failed run exits nonzero and preserves completed measurements.
 
 ## Validation
 

@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "long-05",
+  "description": "Long case 05: tablet decision.",
+  "expected": {
+    "destination": "Surabaya",
+    "available_units": 427,
+    "shortfall_units": 518,
+    "action": "REORDER"
+  },
+  "reasoning_fields": [
+    "available_units",
+    "shortfall_units",
+    "action"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

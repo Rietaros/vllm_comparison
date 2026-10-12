@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "medium-01",
+  "description": "Medium case 01: monitor decision.",
+  "expected": {
+    "vendor": "V01-07",
+    "landed_cost": 832,
+    "eligible_vendors": 8,
+    "delivery_days": 1
+  },
+  "reasoning_fields": [
+    "landed_cost",
+    "eligible_vendors",
+    "delivery_days"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

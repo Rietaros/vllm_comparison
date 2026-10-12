@@ -1,0 +1,18 @@
+{
+  "mode": "static",
+  "task_id": "short-05",
+  "description": "Short case 05: tablet decision.",
+  "expected": {
+    "item": "TABLET",
+    "available_units": 156,
+    "fulfillable": true
+  },
+  "reasoning_fields": [
+    "available_units",
+    "fulfillable"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "long-01",
+  "description": "Long case 01: monitor decision.",
+  "expected": {
+    "destination": "Bandung",
+    "available_units": 226,
+    "shortfall_units": 683,
+    "action": "REORDER"
+  },
+  "reasoning_fields": [
+    "available_units",
+    "shortfall_units",
+    "action"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

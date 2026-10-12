@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "long-04",
+  "description": "Long case 04: printer decision.",
+  "expected": {
+    "destination": "Bandung",
+    "available_units": 371,
+    "shortfall_units": 0,
+    "action": "RELEASE"
+  },
+  "reasoning_fields": [
+    "available_units",
+    "shortfall_units",
+    "action"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

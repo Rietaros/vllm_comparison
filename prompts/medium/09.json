@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "medium-09",
+  "description": "Medium case 09: speaker decision.",
+  "expected": {
+    "vendor": "V09-02",
+    "landed_cost": 2085,
+    "eligible_vendors": 4,
+    "delivery_days": 2
+  },
+  "reasoning_fields": [
+    "landed_cost",
+    "eligible_vendors",
+    "delivery_days"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

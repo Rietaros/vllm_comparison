@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "long-08",
+  "description": "Long case 08: headset decision.",
+  "expected": {
+    "destination": "Surabaya",
+    "available_units": 426,
+    "shortfall_units": 0,
+    "action": "RELEASE"
+  },
+  "reasoning_fields": [
+    "available_units",
+    "shortfall_units",
+    "action"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

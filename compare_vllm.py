@@ -24,6 +24,7 @@ from collections import Counter
 from pathlib import Path
 
 from prompt_tasks import PROMPT_SUITE, SYSTEM, TASK_BUILDERS, task_suite_sha256
+from prompt_bank import DEFAULT_MANIFEST, load_bank, encode_cases, PROMPT_SUITE as BANK_SUITE
 from answer_comparison import SCORING_POLICY, score_answer
 from benchmark_config import DEFAULT_CONFIG, MODEL_TIERS, load_models
 from benchmark_backend import (resolve_backend, add_backend_arguments, device_memory_budget,
@@ -417,12 +418,13 @@ def make_prompts(tokenizer, budgets, enable_thinking=None):
 
 
 def task_metadata(prompt):
-    return {key: prompt[key] for key in ("prompt_suite", "task_id", "task_mode", "expected", "reasoning_fields", "comparison")
+    return {key: prompt[key] for key in ("prompt_suite", "task_id", "task_mode", "expected", "reasoning_fields", "comparison",
+                                        "case_id", "prompt_file", "expected_file", "prompt_text_sha256", "expectation_sha256")
             if key in prompt}
 
 
 def validate_resume_tasks(previous, current):
-    for field in ("prompt_sha256", "expected", "reasoning_fields", "comparison", "task_mode"):
+    for field in ("prompt_sha256", "expected", "reasoning_fields", "comparison", "task_mode", "case_id", "trial_id", "expectation_sha256"):
         if [p.get(field) for p in previous] != [p.get(field) for p in current]:
             raise ValueError(f"Resume tasks must match the original inputs and scoring: {field}")
 
@@ -443,6 +445,14 @@ def trial_key(row):
 
 def make_trials(prompts, repeats):
     """Rotate context order each round, with the same schedule for all precisions."""
+    if any("trial_id" in prompt for prompt in prompts):
+        by_key = {trial_key(prompt): prompt for prompt in prompts}
+        required = {(context, index) for context in LEVELS for index in range(1, repeats + 1)}
+        if len(by_key) != len(prompts) or set(by_key) != required:
+            raise ValueError("Each trial requires one distinct case in every context")
+        return [dict(by_key[(context, index)]) for index in range(1, repeats + 1)
+                for context in LEVELS[(index - 1) % 3:] + LEVELS[:(index - 1) % 3]]
+    # Historical generated-template callers retain their original schedule.
     trials = []
     for trial_id in range(1, repeats + 1):
         offset = (trial_id - 1) % len(prompts)
@@ -627,6 +637,10 @@ def compare_rows(rows):
     references = {trial_key(r): r for r in rows if r["precision"] == "FP32" and r["status"] == "ok"}
     for row in rows:
         reference = references.get(trial_key(row))
+        if reference and row.get("case_id"):
+            for field in ("case_id", "prompt_sha256", "expected", "reasoning_fields", "comparison", "expectation_sha256"):
+                if row.get(field) != reference.get(field):
+                    raise ValueError(f"FP32 comparison case mismatch: {trial_key(row)}: {field}")
         if row["status"] != "ok" or reference is None:
             continue
         row["speedup_vs_fp32"] = reference["generation_s"] / row["generation_s"]
@@ -677,8 +691,20 @@ def summarize_rows(rows, precisions, repeats):
                                if any(r["status"] == "error" for r in trials) else "pending"),
                     "input_tokens": next((r.get("input_tokens") for r in trials), None),
                     "weight_payload_bytes": next((r["weight_payload_bytes"] for r in trials if "weight_payload_bytes" in r), None)}
-            item["task_id"] = next((r.get("task_id") for r in trials), None)
-            item["expected"] = next((r["expected"] for r in trials if "expected" in r), None)
+            item["task_ids"] = list(dict.fromkeys(r["task_id"] for r in trials if r.get("task_id")))
+            item["task_id"] = item["task_ids"][0] if len(item["task_ids"]) == 1 else None
+            references_by_trial = [{"trial_id": r.get("trial_id", 1), "case_id": r.get("case_id"), "expected": r["expected"]}
+                                   for r in sorted(trials, key=lambda r: r.get("trial_id", 1)) if "expected" in r]
+            expected_values = {json.dumps(r["expected"], sort_keys=True) for r in references_by_trial}
+            item["expected"] = references_by_trial[0]["expected"] if len(expected_values) == 1 else None
+            item["expected_by_trial"] = references_by_trial
+            item["case_ids"] = list(dict.fromkeys(r["case_id"] for r in trials if r.get("case_id")))
+            item["unique_cases_successful"] = len({r["case_id"] for r in successful if r.get("case_id")})
+            input_stats = metric_stats([r.get("input_tokens") for r in trials])
+            for statistic, value in input_stats.items():
+                item["input_tokens_" + statistic] = value
+            if input_stats["minimum"] != input_stats["maximum"]:
+                item["input_tokens"] = None
             for name in ("generation_s", "end_to_end_tokens_per_s", "ttft_s", "output_tokens", "field_accuracy", "reasoning_accuracy", "text_similarity_fp32", *MEMORY_METRICS):
                 for statistic, value in metric_stats([r.get(name) for r in successful]).items():
                     item[name + "_" + statistic] = value
@@ -696,7 +722,8 @@ def summarize_rows(rows, precisions, repeats):
                 item[field + "_correct_rate"] = statistics.mean(values) if values else None
             outputs = Counter(r["output"] for r in successful)
             item["unique_outputs"] = len(outputs)
-            item["output_consistency_rate"] = max(outputs.values()) / n if n else None
+            item["most_common_output_rate"] = max(outputs.values()) / n if n else None
+            item["output_consistency_rate"] = item["most_common_output_rate"] if len(item["case_ids"]) <= 1 else None
             for name in ("output_exact_match_fp32", "answer_agreement_fp32"):
                 values = [r[name] for r in successful if name in r]
                 item[name + "_rate"] = statistics.mean(values) if values else None
@@ -707,7 +734,11 @@ def summarize_rows(rows, precisions, repeats):
     for item in summaries:
         reference = references.get(item["context"])
         baseline = reference["generation_s_mean"] if reference else None
-        item["speedup_vs_fp32_mean"] = baseline / item["generation_s_mean"] if baseline and item["generation_s_mean"] else None
+        selected_ids = {r.get("trial_id", 1) for r in rows if r["precision"] == item["precision"] and r["context"] == item["context"] and r["status"] == "ok"}
+        reference_ids = {r.get("trial_id", 1) for r in rows if r["precision"] == "FP32" and r["context"] == item["context"] and r["status"] == "ok"}
+        item["paired_successful_trials_fp32"] = len(selected_ids & reference_ids)
+        item["speedup_vs_fp32_mean"] = (baseline / item["generation_s_mean"] if baseline and item["generation_s_mean"]
+                                       and selected_ids == reference_ids else None)
     return summaries
 
 
@@ -751,10 +782,11 @@ def report(output_dir, hardware, settings, prompts, rows):
     summaries = summarize_rows(rows, settings["precisions"], repeats)
     write_json(output_dir / "results.json", {"created_utc": datetime.now(timezone.utc).isoformat(),
                "hardware": hardware, "settings": settings,
-               "expected_answers": {p["context"]: p.get("expected") for p in prompts},
+               "expected_answers": {context: {p.get("case_id", str(p.get("trial_id", 1))): p.get("expected")
+                    for p in prompts if p["context"] == context} for context in LEVELS},
                "prompts": prompts, "summary": summaries, "results": rows})
     write_json(output_dir / "summary.json", summaries)
-    columns = ["precision", "backend", "context", "task_id", "task_mode", "comparison", "reasoning_fields", "trial_id", "status", "input_tokens", "output_tokens", "generation_calls",
+    columns = ["precision", "backend", "context", "case_id", "task_id", "task_mode", "prompt_file", "expected_file", "expectation_sha256", "comparison", "reasoning_fields", "trial_id", "status", "input_tokens", "output_tokens", "generation_calls",
                *MEMORY_METRICS, "engine_rss_high_water_bytes", "memory_before", "memory_after", "experiment_contract",
                "generation_s", "end_to_end_tokens_per_s", "ttft_s", "ttft_source", "ttft_unavailable_reason", "engine_load_s",
                "prepare_s", "weight_payload_bytes", "weight_payload_scope", "runtime_audit", "driver_peak_rss_bytes", "field_accuracy",
@@ -773,12 +805,12 @@ def report(output_dir, hardware, settings, prompts, rows):
                          for key, value in item.items()} for item in summaries)
     def number(value, places=3):
         return f"{value:.{places}f}" if value is not None else "—"
-    lines = ["# vLLM precision comparison: repeated-run averages", "", f"Model: `{settings['model']}`; source: `{settings.get('source_revision', 'not loaded')}`.",
+    lines = ["# vLLM precision comparison: case averages", "", f"Model: `{settings['model']}`; source: `{settings.get('source_revision', 'not loaded')}`.",
              "Hardware: " + hardware_description(hardware) + ".", "",
              f"{repeats} measured generations per precision/context ({len(settings['precisions']) * len(LEVELS) * repeats} requested in total). Batch size 1; temperature 0; seed 42; prefix caching disabled.",
              "Each round rotates context order; all precisions use the same schedule and the same token IDs. The model is loaded once per precision.",
              "Means include the first measured request. No extra benchmark warm-up is added. Engine initialization/profile/warm-up passes are outside generation timing.",
-             "These are repeated measurements of fixed prompts, not cross-validation folds or independent accuracy examples. Greedy outputs may be identical across repeats.",
+             "Each round uses a different editable prompt and expected answer per context. Means and sample deviations summarize variation across these cases and their output lengths.",
              "Elapsed time includes prompt prefill, decoding, and API overhead; tokens/s is end-to-end output throughput.",
              f"Output limit: {settings['max_new_tokens']} tokens. {sum(r.get('finish_reason') == 'length' for r in rows)} returned responses reached the limit; truncated answers are retained and graded as returned.",
              "Model download, conversion, and engine loading are timed separately. First requests can include lazy kernel initialization.",
@@ -792,7 +824,7 @@ def report(output_dir, hardware, settings, prompts, rows):
               "Loaded parameter bytes and dtypes are saved in runtime_audit; FP8/INT4 sizes describe prepared CUDA files."
               if hardware.get("backend") == "cuda" else "Prepared Metal files are audited against their requested storage format."),
              "RSS is the cumulative driver-process high-water mark, not the complete engine/GPU memory usage.", "",
-             "| Precision | Context | Status | Completed / requested | Input tokens | Mean seconds ± SD | Mean TTFT ms ± SD | TTFT measured / completed | Mean tokens/s | Weight MiB | Mean correct fields | Answer pass rate | Speedup vs FP32 |",
+             "| Precision | Context | Status | Completed / requested | Mean input tokens | Mean seconds ± SD | Mean TTFT ms ± SD | TTFT measured / completed | Mean tokens/s | Weight MiB | Mean correct fields | Answer pass rate | Speedup vs FP32 |",
              "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for item in summaries:
         size = item["weight_payload_bytes"]
@@ -802,7 +834,7 @@ def report(output_dir, hardware, settings, prompts, rows):
         pass_text = number(pass_rate * 100, 1) + "%" if pass_rate is not None else "—"
         timing = number(item["generation_s_mean"]) + " ± " + number(item["generation_s_stddev"])
         ttft, ttft_coverage = ttft_cells(item)
-        lines.append(f"| {item['precision']} | {item['context']} | {item['status']} | {item['trials_successful']} / {repeats} | {item['input_tokens'] or '—'} | "
+        lines.append(f"| {item['precision']} | {item['context']} | {item['status']} | {item['trials_successful']} / {repeats} | {number(item.get('input_tokens_mean'), 1)} | "
                      f"{timing} | {ttft} | {ttft_coverage} | {number(item['end_to_end_tokens_per_s_mean'], 1)} | "
                      f"{number(size / MIB if size is not None else None, 1)} | {accuracy_text} | {pass_text} | "
                      f"{number(item['speedup_vs_fp32_mean'], 2)} |")
@@ -815,9 +847,9 @@ def report(output_dir, hardware, settings, prompts, rows):
               "Each context reads its Markdown prompt and JSON expectation file. Generated tasks add complete records to fit their budgets and calculate references from those records. "
               "Static tasks use the Markdown literally with the configured expected answer; their actual token counts may be below the budgets. "
               "Context length and reasoning difficulty change together, so differences across contexts do not isolate length alone. "
-              "Each precision receives the same token IDs, reference answer, and comparison rules at a given context.", ""]
+              "Each precision receives the same token IDs, reference answer, and comparison rules for a given context and trial ID.", ""]
     for prompt in prompts:
-        lines += [f"- **{prompt['context']}**: {prompt.get('task_description', 'Task not tokenized in this plan')} "
+        lines += [f"- **{prompt['context']} / {prompt.get('case_id', 'template')}**: {prompt.get('task_description', 'Task not tokenized in this plan')} "
                   f"Records: {prompt.get('record_count', 'pending')}; input tokens: {prompt.get('input_tokens') or 'pending'}. "
                   f"Reference: `{json.dumps(prompt.get('expected'), ensure_ascii=False)}`. "
                   f"Comparison: `{json.dumps(prompt.get('comparison', {}), ensure_ascii=False)}`."]
@@ -834,7 +866,7 @@ def report(output_dir, hardware, settings, prompts, rows):
               "Summary files retain each task's per-field correctness and the mean accuracy of its reasoning fields among successful requests. Invalid JSON scores false for all fields; valid JSON fences are accepted.",
               "Mean tokens/s is the arithmetic mean of individual trial rates. Summary files also include weighted tokens/s, median, minimum, maximum, and trial counts.",
               "Speedup is the FP32 mean latency divided by the comparison mean for the same context; raw output comparisons pair the same trial ID.",
-              "Repeated timing measures runtime variation. These three fixed tasks do not establish overall model quality.", ""]
+              "The dataset contains synthetic examples of three task families. Its accuracy does not establish overall model quality.", ""]
     for level in LEVELS:
         lines += ["## " + level + " answers", ""]
         for precision in settings["precisions"]:
@@ -854,6 +886,18 @@ def report(output_dir, hardware, settings, prompts, rows):
     print("\nReport: " + str(output_dir / "comparison.md"))
 
 
+def write_prompt_files(output_dir, prompts, system):
+    write_json(output_dir / "prompts.json", prompts)
+    lines = ["# Complete benchmark prompt cases", "", "Suite: " + BANK_SUITE, "", "System message: " + system, ""]
+    for prompt in prompts:
+        lines += [f"## {prompt['context']} / {prompt['case_id']} / trial {prompt['trial_id']}", "", prompt["task_description"], "",
+                  f"Input tokens including chat template: {prompt['input_tokens']}. Budget: {prompt['target_tokens']}.", "",
+                  "Reference answer: `" + json.dumps(prompt["expected"], ensure_ascii=False) + "`.", "",
+                  "Comparison rules: `" + json.dumps(prompt["comparison"], ensure_ascii=False) + "`.", "",
+                  "```text", prompt["prompt"], "```", ""]
+    (output_dir / "prompts.md").write_text("\n".join(lines))
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     add_backend_arguments(parser)
@@ -862,10 +906,12 @@ def parse_args(argv=None):
     selection.add_argument("--model", help="Explicit model ID or local directory; overrides config")
     selection.add_argument("--tier", choices=MODEL_TIERS, default="lightweight", help="Model tier from config (default: lightweight)")
     parser.add_argument("--revision", help="Optional Hugging Face commit/tag; resolved commit is recorded")
+    parser.add_argument("--prompt-manifest", type=Path, default=DEFAULT_MANIFEST,
+                        help="Ordered Markdown/JSON case pairs (default: prompts/cases.json)")
     add_precision_arguments(parser)
     parser.add_argument("--context-tokens", type=int, nargs=3, default=[256, 1024, 4096], metavar=("SHORT", "MEDIUM", "LONG"))
     parser.add_argument("--max-new-tokens", type=int, default=96)
-    parser.add_argument("--repeats", type=int, default=10, help="Measured generations per precision/context (default: 10)")
+    parser.add_argument("--repeats", type=int, default=10, help="Distinct cases per precision/context (default: 10; requires that many case pairs)")
     add_memory_arguments(parser)
     parser.add_argument("--thinking", choices=["auto", "on", "off"], default="auto",
                         help="Auto disables thinking for Qwen3 to compare concise final answers")
@@ -916,7 +962,7 @@ def main():
         print(json.dumps(hardware, indent=2))
         return 0
     # Validate editable tasks before resolving or downloading any model.
-    preview_tasks = {level: TASK_BUILDERS[level](0) for level in LEVELS}
+    bank = load_bank(args.prompt_manifest, args.repeats)
     output_dir = (args.output_dir or ROOT / "results" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     settings = {"model": args.model, "backend": backend,
@@ -927,7 +973,8 @@ def main():
                 "memory_budget_gib": args.memory_budget_gib,
                 "measured_generations_per_cell": args.repeats, "benchmark_warmup_generations": 0,
                 "seed": 42, "temperature": 0.0, "prefix_caching": False,
-                "prompt_suite": PROMPT_SUITE, "task_suite_sha256": task_suite_sha256(),
+                "prompt_suite": BANK_SUITE, "task_suite_sha256": bank["sha256"], "prompt_manifest": bank["manifest"],
+                "case_policy": "one-manifest-case-per-context-and-trial-v1", "system_prompt": bank["system"],
                 "scoring_policy": SCORING_POLICY, "timing_policy": TIMING_POLICY,
                 "thinking_policy": args.thinking, "cache_policy": CACHE_POLICIES[backend]}
     settings.update(activation_settings(args.precisions, backend))
@@ -945,12 +992,8 @@ def main():
     elif any((output_dir / name).exists() for name in ("results.json", "prompts.json")):
         raise ValueError("Output directory already contains a run; use a new directory or --resume")
     if args.dry_run:
-        prompts = [{"context": level, "input_tokens": None, "target_tokens": budget,
-                    "prompt_suite": PROMPT_SUITE, "task_id": preview_tasks[level]["task_id"],
-                    "task_mode": preview_tasks[level]["task_mode"], "comparison": preview_tasks[level]["comparison"],
-                    "reasoning_fields": preview_tasks[level]["reasoning_fields"],
-                    "task_description": preview_tasks[level]["task_description"]}
-                   for level, budget in zip(LEVELS, args.context_tokens)]
+        prompts = encode_cases(bank, None, args.context_tokens)
+        write_prompt_files(output_dir, prompts, bank["system"])
         rows = [row for precision in args.precisions for row in blank_rows(
             precision, make_trials([{**p, "prompt_sha256": None} for p in prompts], args.repeats), "planned", "Dry run; no compute performed", backend)]
         report(output_dir, hardware, settings, prompts, rows)
@@ -976,21 +1019,12 @@ def main():
     source_config = json.loads((source / "config.json").read_text())
     enable_thinking = (False if source_config.get("model_type") == "qwen3" else None) if args.thinking == "auto" else args.thinking == "on"
     settings["enable_thinking"] = enable_thinking
-    prompts = make_prompts(tokenizer, args.context_tokens, enable_thinking)
+    prompts = encode_cases(bank, tokenizer, args.context_tokens, enable_thinking)
     trials = make_trials(prompts, args.repeats)
     settings["trial_schedule"] = [{"trial_id": p["trial_id"], "context": p["context"]} for p in trials]
     if previous:
         validate_resume_tasks(previous["prompts"], prompts)
-    write_json(output_dir / "prompts.json", prompts)
-    prompt_lines = ["# Complete benchmark prompts", "", "Suite: " + PROMPT_SUITE,
-                    "", "System message: " + SYSTEM, ""]
-    for prompt in prompts:
-        prompt_lines += ["## " + prompt["context"], "", prompt["task_description"], "",
-                         f"Input tokens including chat template: {prompt['input_tokens']}. Unique records: {prompt['record_count']}.",
-                         "", "Reference answer: `" + json.dumps(prompt["expected"], ensure_ascii=False) + "`.",
-                         "", "Comparison rules: `" + json.dumps(prompt["comparison"], ensure_ascii=False) + "`.",
-                         "", "```text", prompt["prompt"], "```", ""]
-    (output_dir / "prompts.md").write_text("\n".join(prompt_lines))
+    write_prompt_files(output_dir, prompts, bank["system"])
     source_stats = safetensors_info(source)
     settings["source_weight_stats"] = source_stats
     excluded = ("lm_head.weight",) if source_config.get("model_type") == "qwen3" and source_config.get("tie_word_embeddings") else ()

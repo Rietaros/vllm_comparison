@@ -43,7 +43,7 @@ def collect_results(output_dir, settings):
                        "enable_thinking": data["settings"].get("enable_thinking"),
                        "prompts": [{key: prompt.get(key) for key in ("context", "task_id", "task_description",
                                      "input_tokens", "record_count", "prompt_sha256", "expected", "reasoning_fields", "output_example",
-                                     "task_mode", "comparison")}
+                                     "task_mode", "comparison", "case_id", "trial_id", "prompt_file", "expected_file")}
                                    for prompt in data.get("prompts", [])],
                        "report": str(path.parent / "comparison.md"),
                        "hardware": data["hardware"]})
@@ -78,7 +78,7 @@ def suite_report(output_dir, hardware, settings):
     lines = ["# Model size and precision comparison", "",
              "Hardware: " + bench.hardware_description(hardware) + ".", "",
              f"Requested {requested} generations; attempted {attempted}; completed {successful}; hardware-skipped {skipped}; error rows {errors}. "
-             f"Each measured model/precision/context cell has {settings['repeats']} requested repetitions.", "",
+              f"Each model/precision/context cell requests {settings['repeats']} different prompt/answer cases.", "",
              "The tiers describe relative parameter counts within this experiment. A 4B model is the largest default tier.", "",
              "## Models and hardware fit", "",
              "| Tier | Model | Model parameters | Precision | Estimated runtime GiB | Budget GiB | Hardware plan |",
@@ -104,11 +104,11 @@ def suite_report(output_dir, hardware, settings):
               "Length and task difficulty change together. Cross-context timing differences describe different workloads and cannot isolate context length as their cause.", ""]
     if models:
         for prompt in models[0].get("prompts", []):
-            lines += [f"- **{prompt['context']}**: {prompt['task_description']} Input tokens: {prompt['input_tokens']}; "
+            lines += [f"- **{prompt['context']} / {prompt.get('case_id', 'template')}**: {prompt['task_description']} Input tokens: {prompt['input_tokens']}; "
                       f"records: {prompt['record_count']}; reference: `{json.dumps(prompt['expected'], ensure_ascii=False)}`; "
                       f"comparison: `{json.dumps(prompt.get('comparison', {}), ensure_ascii=False)}`."]
     lines += ["", "## Average results", "",
-              "| Tier | Precision | Context | Status | Completed | Tokens in / mean out | Saved weights GiB | Mean seconds ± SD | Mean TTFT ms ± SD | TTFT measured / completed | Mean output tokens/s | JSON valid | Correct fields | Reasoning fields | Exact answer pass |",
+              "| Tier | Precision | Context | Status | Completed | Mean tokens in / out | Saved weights GiB | Mean seconds ± SD | Mean TTFT ms ± SD | TTFT measured / completed | Mean output tokens/s | JSON valid | Correct fields | Reasoning fields | Exact answer pass |",
               "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     if conditions:
         start = lines.index("## Average results")
@@ -119,7 +119,7 @@ def suite_report(output_dir, hardware, settings):
         valid, passed = item["json_valid_rate"], item["answer_pass_rate"]
         ttft, ttft_coverage = bench.ttft_cells(item)
         lines.append(f"| {item['tier']} | {item['precision']} | {item['context']} | {item['status']} | "
-                     f"{item['trials_successful']}/{item['trials_requested']} | {item['input_tokens'] or '—'} / {number(item['output_tokens_mean'], 1)} | "
+                     f"{item['trials_successful']}/{item['trials_requested']} | {number(item.get('input_tokens_mean'), 1)} / {number(item['output_tokens_mean'], 1)} | "
                      f"{number(item['weight_payload_bytes'] / 1024**3 if item['weight_payload_bytes'] is not None else None)} | {timing} | {ttft} | {ttft_coverage} | "
                      f"{number(item['end_to_end_tokens_per_s_mean'], 1)} | {percent(valid)} | "
                      f"{percent(item['field_accuracy_mean'])} | {percent(item.get('reasoning_accuracy_mean'))} | {percent(passed)} |")
@@ -139,7 +139,7 @@ def suite_report(output_dir, hardware, settings):
               "Extra keys and string case follow each task's comparison options. Expected fields must always be present. "
               "Reasoning fields are selected in the task's expectation file and are also scored separately in the raw field results. "
               "Invalid JSON prevents field scoring. Per-field rates use successful requests; full-answer/JSON rates count all generation attempts. "
-              "Greedy repetitions measure timing variability, not independent examples or cross-validation. "
+              "Each round evaluates a different editable case. Deviations include variation in workloads and returned answer lengths. "
               "These tasks cannot establish general model quality or a monotonic relationship between model size and correctness.", "",
               ("CUDA FP8 uses per-channel E4M3 weights and INT4 uses symmetric groups of 128; both use weight-only Marlin with BF16 inputs. "
                "Dense weight payloads describe the original source file; loaded parameter bytes are in each runtime audit. "
@@ -171,6 +171,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     bench.add_backend_arguments(parser)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Model configuration JSON (default: config.json beside this script)")
+    parser.add_argument("--prompt-manifest", type=Path, default=bench.DEFAULT_MANIFEST, help="Ordered prompt/answer case manifest")
     parser.add_argument("--models", nargs=3, metavar=("LIGHT", "MEDIUM", "COMPLEX"),
                         help="Override the lightweight, medium and complex models from config")
     parser.add_argument("--model-order", nargs=3, choices=TIERS, default=list(TIERS),
@@ -217,8 +218,11 @@ def main():
     settings["cuda_visible_devices"] = hardware.get("cuda_visible_devices")
     settings["gpu_uuid"] = hardware.get("gpu_uuid")
     settings["cache_policy"] = bench.CACHE_POLICIES[settings["backend"]]
-    settings["prompt_suite"] = bench.PROMPT_SUITE
-    settings["task_suite_sha256"] = bench.task_suite_sha256()
+    bank = bench.load_bank(args.prompt_manifest, args.repeats)
+    settings["prompt_suite"] = bench.BANK_SUITE
+    settings["task_suite_sha256"] = bank["sha256"]
+    settings["prompt_manifest"] = bank["manifest"]
+    settings["case_policy"] = "one-manifest-case-per-context-and-trial-v1"
     settings["scoring_policy"] = bench.SCORING_POLICY
     settings["timing_policy"] = bench.TIMING_POLICY
     settings.update(bench.activation_settings(args.precisions, settings["backend"]))
@@ -239,6 +243,7 @@ def main():
         folder.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, str(bench.ROOT / "compare_vllm.py"), "--model", model,
                    "--backend", settings["backend"],
+                   "--prompt-manifest", bank["manifest"],
                    "--output-dir", str(folder), "--repeats", str(args.repeats),
                    "--max-new-tokens", str(args.max_new_tokens),
                    *(["--memory-budget-gib", str(args.memory_budget_gib)] if args.memory_budget_gib is not None

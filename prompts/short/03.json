@@ -1,0 +1,18 @@
+{
+  "mode": "static",
+  "task_id": "short-03",
+  "description": "Short case 03: router decision.",
+  "expected": {
+    "item": "ROUTER",
+    "available_units": 140,
+    "fulfillable": true
+  },
+  "reasoning_fields": [
+    "available_units",
+    "fulfillable"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

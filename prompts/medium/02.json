@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "medium-02",
+  "description": "Medium case 02: keyboard decision.",
+  "expected": {
+    "vendor": "V02-13",
+    "landed_cost": 914,
+    "eligible_vendors": 8,
+    "delivery_days": 1
+  },
+  "reasoning_fields": [
+    "landed_cost",
+    "eligible_vendors",
+    "delivery_days"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "mode": "static",
+  "task_id": "short-07",
+  "description": "Short case 07: webcam decision.",
+  "expected": {
+    "item": "WEBCAM",
+    "available_units": 172,
+    "fulfillable": true
+  },
+  "reasoning_fields": [
+    "available_units",
+    "fulfillable"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

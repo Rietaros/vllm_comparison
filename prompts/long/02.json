@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "long-02",
+  "description": "Long case 02: keyboard decision.",
+  "expected": {
+    "destination": "Surabaya",
+    "available_units": 227,
+    "shortfall_units": 0,
+    "action": "RELEASE"
+  },
+  "reasoning_fields": [
+    "available_units",
+    "shortfall_units",
+    "action"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}

@@ -60,7 +60,7 @@ This only writes a plan; it does not download models, run inference, or verify G
   --output-dir results/nvidia-activation
 ```
 
-This runs the configured lightweight model, initially **Qwen3-0.6B**, for **60 requests**: two activation cases × three contexts × ten repeats.
+This runs the configured lightweight model, initially **Qwen3-0.6B**, for **60 requests**: two activation formats × three contexts × ten different prompts.
 
 | Report case | Weights | Inputs to quantized linear layers |
 |---|---|---|
@@ -126,26 +126,18 @@ Edit [config.json](config.json) to change the model saved for each tier. Use unq
 
 `compare_vllm.py --tier medium` selects one tier. `compare_models.py` runs all three, which must have distinct model IDs. NVIDIA support currently targets dense text models such as these Qwen3 models.
 
-Each context pairs a Markdown prompt with a JSON file for its expected answer and comparison rules:
+The default dataset has **10 different prompts and 10 different expected answers per context**: 30 editable pairs in total. [prompts/cases.json](prompts/cases.json) lists their order; [prompts/system.md](prompts/system.md) supplies shared instructions.
 
-| Prompt | Expected answer and rules | Context |
-|---|---|---|
-| [prompts/short.md](prompts/short.md) | [prompts/short.json](prompts/short.json) | Short |
-| [prompts/normal.md](prompts/normal.md) | [prompts/normal.json](prompts/normal.json) | Medium |
-| [prompts/long.md](prompts/long.md) | [prompts/long.json](prompts/long.json) | Long |
+| Context | Editable pairs | Default input budget |
+|---|---|---:|
+| Short | [prompts/short/](prompts/short/): `01.md` / `01.json` through `10.md` / `10.json` | 256 tokens |
+| Medium | [prompts/medium/](prompts/medium/): `01.md` / `01.json` through `10.md` / `10.json` | 1,024 tokens |
+| Long | [prompts/long/](prompts/long/): `01.md` / `01.json` through `10.md` / `10.json` | 4,096 tokens |
 
-[prompts/system.md](prompts/system.md) provides shared system instructions.
+### Change a prompt and its expected answer
 
-### Use your own prompt and expected answer
-
-1. Replace `prompts/short.md` with your question and request a JSON answer, for example:
-
-   ```text
-   There are 6 boxes with 7 items each. How many items are there?
-   Return JSON only with one integer field: "total".
-   ```
-
-2. Replace `prompts/short.json` with:
+1. Edit a Markdown file, such as `prompts/short/01.md`, and ask for a JSON answer.
+2. Edit its matching `prompts/short/01.json`. For a question asking for `6 * 7`, use:
 
    ```json
    {
@@ -156,18 +148,20 @@ Each context pairs a Markdown prompt with a JSON file for its expected answer an
    }
    ```
 
-3. Use a fresh output folder and run once per case:
+3. Run all ten distinct cases per context in a fresh folder:
 
    ```sh
    .venv-cuda/bin/python compare_vllm.py --backend cuda --activation-comparison \
-     --memory-fraction 0.8 --repeats 1 --output-dir results/custom-prompts
+     --memory-fraction 0.8 --repeats 10 --output-dir results/custom-prompts
    ```
 
-Repeat the same edits for `normal.md` / `normal.json` and `long.md` / `long.json`. No Python changes are needed. In `static` mode the Markdown is used literally, without template substitution or padding. The response must be a JSON object, with the keys and value types in `expected`.
+Trial 1 uses `01`, trial 2 uses `02`, and so on. Every precision receives the same case and expected answer for each trial. `--repeats 1` selects only `01` in each context. Counts above 10 require adding more pairs to the manifest; cases are never recycled.
 
-The default `generated` mode keeps the stock, supplier, and shipment tasks. `{"$ref": "available_units"}` inserts the calculated answer from the exact fitted records, preserving its JSON type. Keep `$receipts`, `$quotes`, and `$events` in generated templates. `output_example` supplies illustrative values for `$output_example`; update it when changing the answer schema.
+All files are read from disk. Markdown is used literally, without template substitution or padding, and must fit the selected token budget. The JSON response keys and value types must match `expected`. No Python edits are needed. Use `--prompt-manifest PATH` for another dataset.
 
-`reasoning_fields` selects which fields contribute to reasoning accuracy; omit it to score all fields, or use `[]` to leave that metric unavailable. Set `allow_extra_fields` to `true` to accept additional keys, or `case_sensitive` to `false` to ignore case in string values. Other value types still match exactly. Changed prompts, answers, or rules cannot be mixed into a resumed run.
+`reasoning_fields` selects fields for reasoning accuracy; omit it to score all fields, or use `[]` to leave that metric unavailable. Set `allow_extra_fields` to `true` to accept additional keys, or `case_sensitive` to `false` to ignore string case. Other value types match exactly. Resume rejects changes to prompts, expected answers, case order, or comparison rules.
+
+The earlier single-template files (`short.md`, `normal.md`, and `long.md` directly under `prompts/`) are retained for historical helpers. Current runs use the case folders listed in `cases.json`.
 
 ## Understand the output
 
@@ -195,14 +189,15 @@ Check completed/requested counts, TTFT coverage, and memory coverage before comp
 
 Markdown tables show TTFT in milliseconds; CSV/JSON TTFT values use seconds. Raw memory fields ending in `_bytes` use bytes.
 
-These are three fixed tasks repeated to measure timing variation. They do not establish general model accuracy. CUDA and Metal use different quantization recipes, so compare precisions within the same backend. Actual NVIDIA timing and memory must be measured on your server.
+Accuracy summarizes 30 synthetic cases across three task families. Timing variation includes differences between cases and output lengths; this dataset does not establish general model accuracy. CUDA and Metal use different quantization recipes, so compare precisions within the same backend. Actual NVIDIA timing and memory must be measured on your server.
 
 ## Useful options
 
 | Option | Use |
 |---|---|
-| `--repeats 1` | Quick trial before a ten-repeat measurement; use a separate output folder |
+| `--repeats 1` | Run the first pair in each context; `--repeats 10` selects all ten pairs |
 | `--precisions BF16 INT4` | Select weight formats; use separately from `--activation-comparison` |
+| `--prompt-manifest PATH` | Select another ordered dataset of Markdown/JSON pairs |
 | `--context-tokens 256 1024 4096` | Set Short, Medium, and Long input budgets |
 | `--memory-budget-gib 10` | Choose an absolute planning budget instead of `--memory-fraction` |
 | `--dry-run` | Write a plan without downloads or inference |
@@ -226,4 +221,4 @@ The installer creates a Python 3.12 environment in `.venv`. Use `.venv/bin/pytho
 
 See [benchmark details](docs/benchmark_details.md) for quantization recipes, scoring, timing, memory scopes, and tests. [Previous Apple Silicon results](docs/previous_results.md) are kept separately. Downloaded weights, environments, and generated results are excluded from Git.
 
-The [one-repeat validation run](docs/runs/modular-prompts-1-run/README.md) includes comparison tables, generated answers, and CSV output for the editable prompt/expectation files. It completed **42 generations**, with **3 Complex/FP32 memory skips** and **0 failed cases**, on Apple Silicon using local BF16 source copies. Its saved reports include the observed Metal teardown warnings.
+The [ten-different-cases comparison](docs/runs/distinct-prompts-10-cases/README.md) includes all returned answers, per-trial CSV, averages, and activation-memory results. It completed **420 generations**, with **30 Complex/FP32 memory skips**, **0 failed cases**, and **90 verified FP8 activation pairs**, on Apple Silicon using local BF16 source copies. Reports retain the observed Metal teardown warnings. The [earlier one-repeat run](docs/runs/modular-prompts-1-run/README.md) is preserved separately.

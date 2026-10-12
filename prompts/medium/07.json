@@ -1,0 +1,20 @@
+{
+  "mode": "static",
+  "task_id": "medium-07",
+  "description": "Medium case 07: webcam decision.",
+  "expected": {
+    "vendor": "V07-09",
+    "landed_cost": 1559,
+    "eligible_vendors": 8,
+    "delivery_days": 2
+  },
+  "reasoning_fields": [
+    "landed_cost",
+    "eligible_vendors",
+    "delivery_days"
+  ],
+  "comparison": {
+    "allow_extra_fields": false,
+    "case_sensitive": true
+  }
+}
