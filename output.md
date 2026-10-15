@@ -35,25 +35,27 @@ Apple M1 Pro, 16 GiB unified RAM, Darwin 15.5. Backend: vLLM-Metal.
 
 All means below pool the 30 cases equally. Math and Q&A each have 15 cases across the three lengths. Full-answer pass requires all expected fields, exact JSON types, and the configured schema. Field accuracy is the mean fraction of correct fields per answer. Skipped formats have no accuracy or timing result.
 
-| Model | Format | Completed | Full-answer pass | Math pass | Q&A pass | Field accuracy | JSON valid | Mean latency (s) | Mean TTFT (ms) | Mean output tokens | Saved weights (GiB) |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Qwen3-0.6B | FP32 | 30/30 | 5/30 (16.7%) | 0/15 (0.0%) | 5/15 (33.3%) | 34.7% | 73.3% | 1.370 | 781.1 | 34.6 | 2.220 |
-| Qwen3-0.6B | BF16 | 30/30 | 5/30 (16.7%) | 0/15 (0.0%) | 5/15 (33.3%) | 34.7% | 73.3% | 0.604 | 237.7 | 35.0 | 1.110 |
-| Qwen3-0.6B | FP8 | 30/30 | 3/30 (10.0%) | 0/15 (0.0%) | 3/15 (20.0%) | 29.2% | 73.3% | 0.565 | 288.3 | 38.1 | 0.573 |
-| Qwen3-0.6B | INT4 | 30/30 | 2/30 (6.7%) | 0/15 (0.0%) | 2/15 (13.3%) | 29.4% | 90.0% | 0.446 | 268.0 | 29.3 | 0.312 |
-| Qwen3-0.6B | FP8_A8 | 30/30 | 4/30 (13.3%) | 0/15 (0.0%) | 4/15 (26.7%) | 30.6% | 66.7% | 0.890 | 583.7 | 39.3 | 0.573 |
-| Qwen3-1.7B | FP32 | 30/30 | 9/30 (30.0%) | 0/15 (0.0%) | 9/15 (60.0%) | 51.4% | 76.7% | 2.488 | 1209.5 | 28.4 | 6.410 |
-| Qwen3-1.7B | BF16 | 30/30 | 9/30 (30.0%) | 0/15 (0.0%) | 9/15 (60.0%) | 48.6% | 70.0% | 1.276 | 566.7 | 29.2 | 3.205 |
-| Qwen3-1.7B | FP8 | 30/30 | 10/30 (33.3%) | 0/15 (0.0%) | 10/15 (66.7%) | 47.2% | 70.0% | 1.179 | 721.5 | 32.9 | 1.653 |
-| Qwen3-1.7B | INT4 | 30/30 | 7/30 (23.3%) | 0/15 (0.0%) | 7/15 (46.7%) | 49.7% | 80.0% | 0.959 | 678.6 | 29.2 | 0.902 |
-| Qwen3-1.7B | FP8_A8 | 30/30 | 8/30 (26.7%) | 0/15 (0.0%) | 8/15 (53.3%) | 47.2% | 73.3% | 2.332 | 1879.1 | 31.9 | 1.653 |
-| Qwen3-4B | FP32 | 0/30 | — | — | — | — | — | — | — | — | — |
-| Qwen3-4B | BF16 | 30/30 | 11/30 (36.7%) | 1/15 (6.7%) | 10/15 (66.7%) | 57.2% | 83.3% | 3.154 | 1431.9 | 32.1 | 7.492 |
-| Qwen3-4B | FP8 | 30/30 | 13/30 (43.3%) | 3/15 (20.0%) | 10/15 (66.7%) | 59.4% | 83.3% | 3.338 | 2265.0 | 33.0 | 3.863 |
-| Qwen3-4B | INT4 | 30/30 | 10/30 (33.3%) | 1/15 (6.7%) | 9/15 (60.0%) | 54.4% | 80.0% | 2.409 | 1787.5 | 31.4 | 2.108 |
-| Qwen3-4B | FP8_A8 | 30/30 | 13/30 (43.3%) | 2/15 (13.3%) | 11/15 (73.3%) | 59.4% | 86.7% | 5.976 | 5044.2 | 30.1 | 3.863 |
+| Model | Format | Completed | Full-answer pass | Math pass | Q&A pass | Field accuracy | JSON valid | Mean latency (s) | Mean TTFT (ms) | Mean TPS (tokens/s) | Mean output tokens | Saved weights (GiB) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Qwen3-0.6B | FP32 | 30/30 | 5/30 (16.7%) | 0/15 (0.0%) | 5/15 (33.3%) | 34.7% | 73.3% | 1.370 | 781.1 | 34.2 | 34.6 | 2.220 |
+| Qwen3-0.6B | BF16 | 30/30 | 5/30 (16.7%) | 0/15 (0.0%) | 5/15 (33.3%) | 34.7% | 73.3% | 0.604 | 237.7 | 62.7 | 35.0 | 1.110 |
+| Qwen3-0.6B | FP8 | 30/30 | 3/30 (10.0%) | 0/15 (0.0%) | 3/15 (20.0%) | 29.2% | 73.3% | 0.565 | 288.3 | 77.8 | 38.1 | 0.573 |
+| Qwen3-0.6B | INT4 | 30/30 | 2/30 (6.7%) | 0/15 (0.0%) | 2/15 (13.3%) | 29.4% | 90.0% | 0.446 | 268.0 | 78.2 | 29.3 | 0.312 |
+| Qwen3-0.6B | FP8_A8 | 30/30 | 4/30 (13.3%) | 0/15 (0.0%) | 4/15 (26.7%) | 30.6% | 66.7% | 0.890 | 583.7 | 54.5 | 39.3 | 0.573 |
+| Qwen3-1.7B | FP32 | 30/30 | 9/30 (30.0%) | 0/15 (0.0%) | 9/15 (60.0%) | 51.4% | 76.7% | 2.488 | 1209.5 | 12.9 | 28.4 | 6.410 |
+| Qwen3-1.7B | BF16 | 30/30 | 9/30 (30.0%) | 0/15 (0.0%) | 9/15 (60.0%) | 48.6% | 70.0% | 1.276 | 566.7 | 23.9 | 29.2 | 3.205 |
+| Qwen3-1.7B | FP8 | 30/30 | 10/30 (33.3%) | 0/15 (0.0%) | 10/15 (66.7%) | 47.2% | 70.0% | 1.179 | 721.5 | 30.8 | 32.9 | 1.653 |
+| Qwen3-1.7B | INT4 | 30/30 | 7/30 (23.3%) | 0/15 (0.0%) | 7/15 (46.7%) | 49.7% | 80.0% | 0.959 | 678.6 | 35.8 | 29.2 | 0.902 |
+| Qwen3-1.7B | FP8_A8 | 30/30 | 8/30 (26.7%) | 0/15 (0.0%) | 8/15 (53.3%) | 47.2% | 73.3% | 2.332 | 1879.1 | 17.8 | 31.9 | 1.653 |
+| Qwen3-4B | FP32 | 0/30 | — | — | — | — | — | — | — | — | — | — |
+| Qwen3-4B | BF16 | 30/30 | 11/30 (36.7%) | 1/15 (6.7%) | 10/15 (66.7%) | 57.2% | 83.3% | 3.154 | 1431.9 | 10.5 | 32.1 | 7.492 |
+| Qwen3-4B | FP8 | 30/30 | 13/30 (43.3%) | 3/15 (20.0%) | 10/15 (66.7%) | 59.4% | 83.3% | 3.338 | 2265.0 | 11.7 | 33.0 | 3.863 |
+| Qwen3-4B | INT4 | 30/30 | 10/30 (33.3%) | 1/15 (6.7%) | 9/15 (60.0%) | 54.4% | 80.0% | 2.409 | 1787.5 | 15.7 | 31.4 | 2.108 |
+| Qwen3-4B | FP8_A8 | 30/30 | 13/30 (43.3%) | 2/15 (13.3%) | 11/15 (73.3%) | 59.4% | 86.7% | 5.976 | 5044.2 | 6.5 | 30.1 | 3.863 |
 
 TTFT is engine request arrival to the first generated token, including queueing and prefill. Latency covers the complete request, including decoding. Saved weights describe tensor payload, not total engine memory.
+
+TPS (tokens per second) measures generated output tokens divided by the full request latency, including prompt prefill, decoding, and API overhead. The tables report the arithmetic mean of per-request TPS (`mean(output_tokens / generation_s)`); this gives each case equal weight. Input tokens are excluded from the numerator. Model loading, conversion, and teardown are excluded from the timed request. Higher TPS means higher measured output throughput; compare it with accuracy and output length.
 
 Representative arithmetic failures show why full-answer pass is stricter than recognizing the intended calculation:
 
@@ -77,35 +79,35 @@ Unevaluated arithmetic expressions are invalid JSON and cannot receive field cre
 
 Each length has ten cases: five math and five understanding Q&A. Values after ± are sample standard deviations across different cases, including different answer lengths; they do not estimate repeatability for one fixed prompt.
 
-| Model | Format | Short pass | Short latency (s) | Medium pass | Medium latency (s) | Long pass | Long latency (s) |
-|---|---|---:|---:|---:|---:|---:|---:|
-| Qwen3-0.6B | FP32 | 2/10 | 0.491 ± 0.147 | 2/10 | 0.851 ± 0.259 | 1/10 | 2.769 ± 0.851 |
-| Qwen3-0.6B | BF16 | 2/10 | 0.302 ± 0.079 | 2/10 | 0.509 ± 0.195 | 1/10 | 1.001 ± 0.324 |
-| Qwen3-0.6B | FP8 | 1/10 | 0.243 ± 0.055 | 1/10 | 0.500 ± 0.165 | 1/10 | 0.952 ± 0.201 |
-| Qwen3-0.6B | INT4 | 1/10 | 0.211 ± 0.036 | 0/10 | 0.340 ± 0.028 | 1/10 | 0.788 ± 0.137 |
-| Qwen3-0.6B | FP8_A8 | 2/10 | 0.318 ± 0.057 | 1/10 | 0.719 ± 0.159 | 1/10 | 1.632 ± 0.308 |
-| Qwen3-1.7B | FP32 | 2/10 | 0.977 ± 0.210 | 4/10 | 1.989 ± 0.724 | 3/10 | 4.497 ± 1.652 |
-| Qwen3-1.7B | BF16 | 2/10 | 0.625 ± 0.243 | 4/10 | 1.101 ± 0.403 | 3/10 | 2.103 ± 0.826 |
-| Qwen3-1.7B | FP8 | 2/10 | 0.445 ± 0.129 | 4/10 | 1.083 ± 0.404 | 4/10 | 2.010 ± 0.524 |
-| Qwen3-1.7B | INT4 | 2/10 | 0.340 ± 0.061 | 2/10 | 0.758 ± 0.172 | 3/10 | 1.781 ± 0.397 |
-| Qwen3-1.7B | FP8_A8 | 2/10 | 0.660 ± 0.058 | 3/10 | 1.860 ± 0.425 | 3/10 | 4.476 ± 0.807 |
-| Qwen3-4B | FP32 | — | — | — | — | — | — |
-| Qwen3-4B | BF16 | 4/10 | 1.293 ± 0.338 | 3/10 | 2.570 ± 1.041 | 4/10 | 5.600 ± 2.085 |
-| Qwen3-4B | FP8 | 4/10 | 1.153 ± 0.371 | 5/10 | 2.689 ± 1.005 | 4/10 | 6.171 ± 1.950 |
-| Qwen3-4B | INT4 | 3/10 | 0.781 ± 0.160 | 3/10 | 1.756 ± 0.417 | 4/10 | 4.690 ± 1.264 |
-| Qwen3-4B | FP8_A8 | 4/10 | 1.570 ± 0.228 | 5/10 | 4.352 ± 0.630 | 4/10 | 12.005 ± 1.933 |
+| Model | Format | Short pass | Short latency (s) | Short TPS | Medium pass | Medium latency (s) | Medium TPS | Long pass | Long latency (s) | Long TPS |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Qwen3-0.6B | FP32 | 2/10 | 0.491 ± 0.147 | 49.0 ± 3.4 | 2/10 | 0.851 ± 0.259 | 37.0 ± 3.7 | 1/10 | 2.769 ± 0.851 | 16.4 ± 3.5 |
+| Qwen3-0.6B | BF16 | 2/10 | 0.302 ± 0.079 | 78.4 ± 7.5 | 2/10 | 0.509 ± 0.195 | 64.6 ± 5.4 | 1/10 | 1.001 ± 0.324 | 45.2 ± 7.4 |
+| Qwen3-0.6B | FP8 | 1/10 | 0.243 ± 0.055 | 104.2 ± 9.6 | 1/10 | 0.500 ± 0.165 | 82.2 ± 11.9 | 1/10 | 0.952 ± 0.201 | 47.0 ± 9.7 |
+| Qwen3-0.6B | INT4 | 1/10 | 0.211 ± 0.036 | 107.0 ± 9.8 | 0/10 | 0.340 ± 0.028 | 80.0 ± 5.6 | 1/10 | 0.788 ± 0.137 | 47.6 ± 8.2 |
+| Qwen3-0.6B | FP8_A8 | 2/10 | 0.318 ± 0.057 | 78.0 ± 12.3 | 1/10 | 0.719 ± 0.159 | 54.9 ± 15.1 | 1/10 | 1.632 ± 0.308 | 30.5 ± 7.3 |
+| Qwen3-1.7B | FP32 | 2/10 | 0.977 ± 0.210 | 16.3 ± 1.9 | 4/10 | 1.989 ± 0.724 | 14.3 ± 1.9 | 3/10 | 4.497 ± 1.652 | 8.1 ± 2.8 |
+| Qwen3-1.7B | BF16 | 2/10 | 0.625 ± 0.243 | 28.9 ± 3.2 | 4/10 | 1.101 ± 0.403 | 25.7 ± 3.5 | 3/10 | 2.103 ± 0.826 | 17.2 ± 5.2 |
+| Qwen3-1.7B | FP8 | 2/10 | 0.445 ± 0.129 | 39.7 ± 6.2 | 4/10 | 1.083 ± 0.404 | 35.0 ± 10.9 | 4/10 | 2.010 ± 0.524 | 17.7 ± 7.4 |
+| Qwen3-1.7B | INT4 | 2/10 | 0.340 ± 0.061 | 47.5 ± 9.5 | 2/10 | 0.758 ± 0.172 | 38.5 ± 10.4 | 3/10 | 1.781 ± 0.397 | 21.4 ± 7.5 |
+| Qwen3-1.7B | FP8_A8 | 2/10 | 0.660 ± 0.058 | 25.2 ± 4.2 | 3/10 | 1.860 ± 0.425 | 19.9 ± 8.7 | 3/10 | 4.476 ± 0.807 | 8.2 ± 3.8 |
+| Qwen3-4B | FP32 | — | — | — | — | — | — | — | — | — |
+| Qwen3-4B | BF16 | 4/10 | 1.293 ± 0.338 | 12.1 ± 1.5 | 3/10 | 2.570 ± 1.041 | 11.1 ± 1.9 | 4/10 | 5.600 ± 2.085 | 8.3 ± 2.1 |
+| Qwen3-4B | FP8 | 4/10 | 1.153 ± 0.371 | 15.3 ± 2.9 | 5/10 | 2.689 ± 1.005 | 13.0 ± 5.5 | 4/10 | 6.171 ± 1.950 | 6.8 ± 1.9 |
+| Qwen3-4B | INT4 | 3/10 | 0.781 ± 0.160 | 21.1 ± 4.7 | 3/10 | 1.756 ± 0.417 | 17.0 ± 6.3 | 4/10 | 4.690 ± 1.264 | 9.0 ± 3.0 |
+| Qwen3-4B | FP8_A8 | 4/10 | 1.570 ± 0.228 | 9.2 ± 1.8 | 5/10 | 4.352 ± 0.630 | 6.6 ± 2.7 | 4/10 | 12.005 ± 1.933 | 3.6 ± 1.4 |
 
 Different lengths also use different topics and difficulty levels. Differences across these columns cannot isolate context length as the cause.
 
 ## Fixed FP8 weights: effect of activation rounding
 
-Each row pools 30 verified paired cases for a model. FP8 uses BF16 projection inputs; FP8_A8 rounds those inputs through MXFP8 while retaining BF16 buffers. Both formats reuse the same FP8 checkpoint and BF16 KV-cache settings. This experiment measures rounding effects and overhead; it does not provide persistent FP8 activation storage or native FP8 arithmetic.
+Each row pools 30 verified paired cases for a model. TPS columns use the same mean per-request definition as the overall table. FP8 uses BF16 projection inputs; FP8_A8 rounds those inputs through MXFP8 while retaining BF16 buffers. Both formats reuse the same FP8 checkpoint and BF16 KV-cache settings. This experiment measures rounding effects and overhead; it does not provide persistent FP8 activation storage or native FP8 arithmetic.
 
-| Model | Verified pairs | FP8 pass | FP8_A8 pass | Pass-rate change (pp) | FP8 latency (s) | FP8_A8 latency (s) | Latency change | FP8 mean MLX peak (MiB) | FP8_A8 mean MLX peak (MiB) |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Qwen3-0.6B | 30 | 3/30 (10.0%) | 4/30 (13.3%) | +3.3 | 0.565 | 0.890 | +57.4% | 1301.6 | 1335.7 |
-| Qwen3-1.7B | 30 | 10/30 (33.3%) | 8/30 (26.7%) | -6.7 | 1.179 | 2.332 | +97.7% | 2382.6 | 2425.4 |
-| Qwen3-4B | 30 | 13/30 (43.3%) | 13/30 (43.3%) | +0.0 | 3.338 | 5.976 | +79.0% | 4636.3 | 4666.2 |
+| Model | Verified pairs | FP8 pass | FP8_A8 pass | Pass-rate change (pp) | FP8 latency (s) | FP8_A8 latency (s) | FP8 TPS | FP8_A8 TPS | Latency change | FP8 mean MLX peak (MiB) | FP8_A8 mean MLX peak (MiB) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Qwen3-0.6B | 30 | 3/30 (10.0%) | 4/30 (13.3%) | +3.3 | 0.565 | 0.890 | 77.8 | 54.5 | +57.4% | 1301.6 | 1335.7 |
+| Qwen3-1.7B | 30 | 10/30 (33.3%) | 8/30 (26.7%) | -6.7 | 1.179 | 2.332 | 30.8 | 17.8 | +97.7% | 2382.6 | 2425.4 |
+| Qwen3-4B | 30 | 13/30 (43.3%) | 13/30 (43.3%) | +0.0 | 3.338 | 5.976 | 11.7 | 6.5 | +79.0% | 4636.3 | 4666.2 |
 
 MLX peak is a per-request engine allocator peak and includes persistent allocations; it is not additional activation storage or total system RAM. Memory counters overlap and must not be added. Sequential runs can differ due to compilation, first-request work, and concurrent system load.
 
@@ -113,6 +115,7 @@ MLX peak is a per-request engine allocator peak and includes persistent allocati
 
 - Verified all 450 unique model/format/context/trial slots, with 420 actual single-generation completions, 30 explicit skips, and no failed trials.
 - TTFT coverage: 420/420 completed requests. FP8 activation contracts: 90/90 successful pairs verified.
+- Recomputed TPS from output token counts and full request latency for all 420 completed requests, and checked the reported mean TPS and per-context sample deviations.
 - Recomputed every configured answer score and checked stored token counts/hashes, typed expectation hashes, context budgets, per-context means, sample deviations, case identities, and consistent prompts/answers across models.
 - Independently checked all 15 arithmetic references against the rendered inputs and all 15 comprehension references against the reviewed passages. Every format/model retains the 5/5 split in each length.
 - 14 completed responses reached the 96-token output limit. Responses are graded exactly as returned, including truncation.
